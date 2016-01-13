@@ -1,0 +1,5 @@
+%pointer
+
+%option stack
+
+%%
