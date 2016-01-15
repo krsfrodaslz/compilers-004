@@ -80,8 +80,7 @@ WHITESPACE      [ \f\r\t\v]+
 <comment>\*\)                   { if (--comment_depth == 0) { BEGIN(INITIAL); } }
 <comment><<EOF>>                { cool_yylval.error_msg = "EOF in comment"; BEGIN(INITIAL); return ERROR; }
 <comment>[^*()\n]*
-<comment>\*
-<comment>\(
+<comment>\*|\(|\)
 <comment>\n                     { ++curr_lineno; }
 \*\)                            { cool_yylval.error_msg = "Unmatched *)"; return ERROR; }
 
@@ -114,7 +113,7 @@ WHITESPACE      [ \f\r\t\v]+
 (?i:of)         { return OF; }
 (?i:not)        { return NOT; }
 
-t(?i:ure)       { cool_yylval.boolean = 1; return BOOL_CONST; }
+t(?i:rue)       { cool_yylval.boolean = 1; return BOOL_CONST; }
 f(?i:alse)      { cool_yylval.boolean = 0; return BOOL_CONST; }
 
  /* identifiers */
@@ -139,7 +138,8 @@ f(?i:alse)      { cool_yylval.boolean = 0; return BOOL_CONST; }
 <broken_str>[^"\n]
 <broken_str>\"  { BEGIN(INITIAL); }
 <broken_str>\n  { ++curr_lineno; BEGIN(INITIAL); }
-<string,broken_str>\\\n { ++curr_lineno;  /* escaped newline (multi-line string) */ }
+<broken_str>\\\n    { ++curr_lineno; }
+<string>\\\n    { ++curr_lineno; CHECK_STRING_LENGTH; *string_buf_ptr++ = '\n'; }
 <string>\n      { ++curr_lineno; BEGIN(INITIAL); cool_yylval.error_msg = "Unterminated string constant"; return ERROR; }
 <string>\"      { *string_buf_ptr = 0; cool_yylval.symbol = stringtable.add_string(string_buf); BEGIN(INITIAL); return STR_CONST; }
 <string>\\n     { CHECK_STRING_LENGTH; *string_buf_ptr++ = '\n'; }
