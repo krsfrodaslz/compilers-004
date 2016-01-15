@@ -43,31 +43,121 @@ extern YYSTYPE cool_yylval;
  *  Add Your own definitions here
  */
 
+#define CHECK_STRING_LENGTH if (string_too_long()) {\
+    BEGIN(broken_str); cool_yylval.error_msg = strdup("String constant too long"); \
+    return ERROR; }
+
+int comment_depth = 0;
+
+int string_too_long();
 %}
+
+%x comment string broken_str
 
 /*
  * Define names for regular expressions here.
  */
 
 DARROW          =>
+ASSIGN          <-
+LE              <=
+KEYWORD         (?i:class|else|fi|if|in|inherits|isvoid|let|loop|pool|then|while|case|esac|new|of|not)|t(?i:rue)|f(?i:alse)
+INT_CONST       [0-9]+
+TYPEID          [A-Z][0-9a-zA-Z_]*
+OBJECTID        [a-z][0-9a-zA-Z_]*
+SPECIAL         [-~@;:.,+*/<={}()]
+SLCOMMENT       \-{2}.*
+COMMENT         \(\*
+WHITESPACE      [ \f\r\t\v]+
 
 %%
 
  /*
   *  Nested comments
   */
+{SLCOMMENT} /* eat up till the end of line */
+<comment,INITIAL>{COMMENT}   {
+    ++comment_depth;
+    BEGIN(comment);
+}
+<comment>\*\)   {
+    if (--comment_depth == 0) {
+        BEGIN(INITIAL);
+    }
+}
+<comment><<EOF>> {
+    cool_yylval.error_msg = strdup("EOF in comment");
+    BEGIN(INITIAL);
+    return ERROR;
+}
+<comment>[^*()\n]*
+<comment>\*
+<comment>\(
 
+<comment>\n { ++curr_lineno; }
+
+ /* Unmatched `*)' */
+\*\)    {
+    cool_yylval.error_msg = strdup("Unmatched *)");
+    return ERROR;
+}
 
  /*
   *  The multiple-character operators.
   */
-{DARROW}		{ return (DARROW); }
+{DARROW}    { return (DARROW); }
+{ASSIGN}    { return (ASSIGN); }
+{LE}        { return LE; }
 
  /*
   * Keywords are case-insensitive except for the values true and false,
   * which must begin with a lower-case letter.
   */
+(?i:class)      { return CLASS; }
+(?i:else)       { return ELSE; }
+(?i:if)         { return IF; }
+(?i:fi)         { return FI; }
+(?i:in)         { return IN; }
+(?i:inherits)   { return INHERITS; }
+(?i:isvoid)     { return ISVOID; }
+(?i:let)        { return LET; }
+(?i:loop)       { return LOOP; }
+(?i:pool)       { return POOL; }
+(?i:then)       { return THEN; }
+(?i:while)      { return WHILE; }
+(?i:case)       { return CASE; }
+(?i:esac)       { return ESAC; }
+(?i:new)        { return NEW; }
+(?i:of)         { return OF; }
+(?i:not)        { return NOT; }
 
+t(?i:ure)         {
+    cool_yylval.boolean = 1;
+    return BOOL_CONST;
+}
+f(?i:alse)        {
+    cool_yylval.boolean = 0;
+    return BOOL_CONST;
+}
+
+ /* identifiers */
+{TYPEID}    {
+    cool_yylval.symbol = idtable.add_string(yytext);
+    return TYPEID;
+}
+{OBJECTID}  {
+    cool_yylval.symbol = idtable.add_string(yytext);
+    return OBJECTID;
+}
+{INT_CONST}   {
+    cool_yylval.symbol = inttable.add_string(yytext);
+    return INT_CONST;
+}
+
+ /* special characters */
+{SPECIAL}   {
+    return (unsigned char)(yytext[0]);
+}
 
  /*
   *  String constants (C syntax)
@@ -75,6 +165,83 @@ DARROW          =>
   *  \n \t \b \f, the result is c.
   *
   */
+\"  {
+    string_buf_ptr = string_buf;
+    BEGIN(string);
+}
+<string><<EOF>> {
+    cool_yylval.error_msg = strdup("EOF in string constant");
+    BEGIN(INITIAL);
+    return ERROR;
+}
+<string>\0 { 
+    BEGIN(broken_str);
+    cool_yylval.error_msg = strdup("String contains null character");
+    return ERROR;
+}
+<broken_str>[^"\n]  /* eat up till " */
+<broken_str>\"  { BEGIN(INITIAL); }
+<broken_str>\n  { 
+    ++curr_lineno;
+    BEGIN(INITIAL);
+}
+<string,broken_str>\\\n {  /* escaped newline (multi-line string) */
+    ++curr_lineno;
+}
+<string>\n  {
+    ++curr_lineno;
+    BEGIN(INITIAL);
+    cool_yylval.error_msg = strdup("Unterminated string constant");
+    return ERROR;
+}
+<string>\"  {
+    *string_buf_ptr = 0;
+    cool_yylval.symbol = stringtable.add_string(string_buf);
+    BEGIN(INITIAL);
+    return STR_CONST;
+}
+<string>\\n|\\t|\\b|\\f {
+    CHECK_STRING_LENGTH
+    char ch;
+    switch (yytext[1]) {
+    case 'n': ch = '\n'; break;
+    case 'f': ch = '\f'; break;
+    case 'b': ch = '\b'; break;
+    case 't': ch = '\t'; break;
+    default: break;
+    }
+    *string_buf_ptr++ = ch;
+}
+<string>\\. {
+    CHECK_STRING_LENGTH
+    *string_buf_ptr++ = yytext[1];
+}
+<string>.   {
+    CHECK_STRING_LENGTH
+    *string_buf_ptr++ = yytext[0];
+}
 
+\n  { ++curr_lineno; }
+{WHITESPACE}    /* ignore whitespaces */
+
+ /* default rule (fallback) */
+.   { return yytext[0]; }
 
 %%
+
+/* 
+ * workaround for new version of flex
+ * see the following links for details
+ * [http://sourceforge.net/p/flex/bugs/149/]
+ * [http://permalink.gmane.org/gmane.linux.lfs.beyond.support/50723]
+ * [https://class.coursera.org/compilers-004/forum/thread?thread_id=174#post-818]
+ */
+#undef yylex
+extern "C" int yylex() { return cool_yylex(); }
+
+int string_too_long() {
+    if (string_buf_ptr-string_buf >= MAX_STR_CONST-1) {
+        return 1;
+    }
+    return 0;
+}
