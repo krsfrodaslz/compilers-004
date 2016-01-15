@@ -44,7 +44,7 @@ extern YYSTYPE cool_yylval;
  */
 
 #define CHECK_STRING_LENGTH if (string_too_long()) {\
-    BEGIN(broken_str); cool_yylval.error_msg = strdup("String constant too long"); \
+    BEGIN(broken_str); cool_yylval.error_msg = "String constant too long"; \
     return ERROR; }
 
 int comment_depth = 0;
@@ -76,31 +76,14 @@ WHITESPACE      [ \f\r\t\v]+
   *  Nested comments
   */
 {SLCOMMENT} /* eat up till the end of line */
-<comment,INITIAL>{COMMENT}   {
-    ++comment_depth;
-    BEGIN(comment);
-}
-<comment>\*\)   {
-    if (--comment_depth == 0) {
-        BEGIN(INITIAL);
-    }
-}
-<comment><<EOF>> {
-    cool_yylval.error_msg = strdup("EOF in comment");
-    BEGIN(INITIAL);
-    return ERROR;
-}
+<comment,INITIAL>{COMMENT}      { ++comment_depth; BEGIN(comment); }
+<comment>\*\)                   { if (--comment_depth == 0) { BEGIN(INITIAL); } }
+<comment><<EOF>>                { cool_yylval.error_msg = "EOF in comment"; BEGIN(INITIAL); return ERROR; }
 <comment>[^*()\n]*
 <comment>\*
 <comment>\(
-
-<comment>\n { ++curr_lineno; }
-
- /* Unmatched `*)' */
-\*\)    {
-    cool_yylval.error_msg = strdup("Unmatched *)");
-    return ERROR;
-}
+<comment>\n                     { ++curr_lineno; }
+\*\)                            { cool_yylval.error_msg = "Unmatched *)"; return ERROR; }
 
  /*
   *  The multiple-character operators.
@@ -131,33 +114,16 @@ WHITESPACE      [ \f\r\t\v]+
 (?i:of)         { return OF; }
 (?i:not)        { return NOT; }
 
-t(?i:ure)         {
-    cool_yylval.boolean = 1;
-    return BOOL_CONST;
-}
-f(?i:alse)        {
-    cool_yylval.boolean = 0;
-    return BOOL_CONST;
-}
+t(?i:ure)       { cool_yylval.boolean = 1; return BOOL_CONST; }
+f(?i:alse)      { cool_yylval.boolean = 0; return BOOL_CONST; }
 
  /* identifiers */
-{TYPEID}    {
-    cool_yylval.symbol = idtable.add_string(yytext);
-    return TYPEID;
-}
-{OBJECTID}  {
-    cool_yylval.symbol = idtable.add_string(yytext);
-    return OBJECTID;
-}
-{INT_CONST}   {
-    cool_yylval.symbol = inttable.add_string(yytext);
-    return INT_CONST;
-}
+{TYPEID}        { cool_yylval.symbol = idtable.add_string(yytext); return TYPEID; }
+{OBJECTID}      { cool_yylval.symbol = idtable.add_string(yytext); return OBJECTID; }
+{INT_CONST}     { cool_yylval.symbol = inttable.add_string(yytext); return INT_CONST; }
 
- /* special characters */
-{SPECIAL}   {
-    return (unsigned char)(yytext[0]);
-}
+ /* special characters (brackets, operators, etc.) */
+{SPECIAL}       { return (unsigned char)(yytext[0]); }
 
  /*
   *  String constants (C syntax)
@@ -165,67 +131,29 @@ f(?i:alse)        {
   *  \n \t \b \f, the result is c.
   *
   */
-\"  {
-    string_buf_ptr = string_buf;
-    BEGIN(string);
-}
-<string><<EOF>> {
-    cool_yylval.error_msg = strdup("EOF in string constant");
-    BEGIN(INITIAL);
-    return ERROR;
-}
-<string>\0 { 
-    BEGIN(broken_str);
-    cool_yylval.error_msg = strdup("String contains null character");
-    return ERROR;
-}
-<broken_str>[^"\n]  /* eat up till " */
+\"  { string_buf_ptr = string_buf; BEGIN(string); }
+<string><<EOF>> { cool_yylval.error_msg = "EOF in string constant"; BEGIN(INITIAL); return ERROR; }
+<string>\0      { BEGIN(broken_str); cool_yylval.error_msg = "String contains null character"; return ERROR; }
+<string>\\\0    { BEGIN(broken_str); cool_yylval.error_msg = "String contains escaped null character"; return ERROR; }
+ /* eat up till string end */
+<broken_str>[^"\n]
 <broken_str>\"  { BEGIN(INITIAL); }
-<broken_str>\n  { 
-    ++curr_lineno;
-    BEGIN(INITIAL);
-}
-<string,broken_str>\\\n {  /* escaped newline (multi-line string) */
-    ++curr_lineno;
-}
-<string>\n  {
-    ++curr_lineno;
-    BEGIN(INITIAL);
-    cool_yylval.error_msg = strdup("Unterminated string constant");
-    return ERROR;
-}
-<string>\"  {
-    *string_buf_ptr = 0;
-    cool_yylval.symbol = stringtable.add_string(string_buf);
-    BEGIN(INITIAL);
-    return STR_CONST;
-}
-<string>\\n|\\t|\\b|\\f {
-    CHECK_STRING_LENGTH
-    char ch;
-    switch (yytext[1]) {
-    case 'n': ch = '\n'; break;
-    case 'f': ch = '\f'; break;
-    case 'b': ch = '\b'; break;
-    case 't': ch = '\t'; break;
-    default: break;
-    }
-    *string_buf_ptr++ = ch;
-}
-<string>\\. {
-    CHECK_STRING_LENGTH
-    *string_buf_ptr++ = yytext[1];
-}
-<string>.   {
-    CHECK_STRING_LENGTH
-    *string_buf_ptr++ = yytext[0];
-}
+<broken_str>\n  { ++curr_lineno; BEGIN(INITIAL); }
+<string,broken_str>\\\n { ++curr_lineno;  /* escaped newline (multi-line string) */ }
+<string>\n      { ++curr_lineno; BEGIN(INITIAL); cool_yylval.error_msg = "Unterminated string constant"; return ERROR; }
+<string>\"      { *string_buf_ptr = 0; cool_yylval.symbol = stringtable.add_string(string_buf); BEGIN(INITIAL); return STR_CONST; }
+<string>\\n     { CHECK_STRING_LENGTH; *string_buf_ptr++ = '\n'; }
+<string>\\f     { CHECK_STRING_LENGTH; *string_buf_ptr++ = '\f'; }
+<string>\\b     { CHECK_STRING_LENGTH; *string_buf_ptr++ = '\b'; }
+<string>\\t     { CHECK_STRING_LENGTH; *string_buf_ptr++ = '\t'; }
+<string>\\.     { CHECK_STRING_LENGTH; *string_buf_ptr++ = yytext[1]; }
+<string>.       { CHECK_STRING_LENGTH; *string_buf_ptr++ = yytext[0]; }
 
-\n  { ++curr_lineno; }
+\n              { ++curr_lineno; }
 {WHITESPACE}    /* ignore whitespaces */
 
- /* default rule (fallback) */
-.   { return yytext[0]; }
+ /* invalid character */
+.               { cool_yylval.error_msg = strdup(yytext); return ERROR; }
 
 %%
 
