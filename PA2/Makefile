@@ -1,5 +1,3 @@
-ASSN= 2
-
 CXX=c++
 
 INC= -I.

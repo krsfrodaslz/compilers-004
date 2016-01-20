@@ -2553,4 +2553,5 @@ void yyfree (void * ptr )
 #line 148 "tokens.flex"
 
 
-
+#undef yylex
+extern "C" int yylex() { return cool_yylex(); }
