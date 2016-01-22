@@ -3,9 +3,9 @@ programming assignments of Standford compilers course
 The structure of the source code is rearranged which means you don't need the virtual machine any more. 
 Just install Flex, Bison and SPIM. Enjoy!
 
-**UPDATE**: If you don't have csh installed on your machine, make a symbol link to bash should work.
+UPDATE: If you don't have csh installed on your machine, make a symbol link to bash should work.
 
 - [x] PA2
-- [-] PA3
+- [x] PA3
 - [ ] PA4
 - [ ] PA5
