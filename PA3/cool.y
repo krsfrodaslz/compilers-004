@@ -72,10 +72,6 @@
   
   */
   
-  
-  #define MAX_SIZE 1025
-  char err_msg_buf[MAX_SIZE];
-  
   void yyerror(const char *s);        /*  defined below; called for each parse error */
   extern int yylex();           /*  the entry point to the lexer  */
   
@@ -141,7 +137,7 @@ documentation for details). */
 %type <formals> formal_list
 %type <case_> case              /* branch */
 %type <cases> case_list
-%type <expression> expr         /* assign, dispatch, cond, etc. */
+%type <expression> expr let_expr    /* assign, dispatch, cond, etc. */
 %type <expressions> expr_list expr_block
 
 %start program
@@ -149,7 +145,7 @@ documentation for details). */
 /* Precedence declarations go here. */
 %right ASSIGN 
 %left NOT
-%precedence LE '<' '='
+%nonassoc LE '<' '='
 %left '+' '-'
 %left '*' '/'
 %left ISVOID  
@@ -165,7 +161,8 @@ Save the root of the abstract syntax tree in a global variable.
 */
 program:
   class_list    { 
-    @$ = @1; 
+    @$ = @1;
+    SET_NODELOC(@1);
     ast_root = program($1); }
 ;
 
@@ -176,13 +173,22 @@ class_list:
 | class_list class  {
     $$ = append_Classes($1,single_Classes($2));
     parse_results = $$; }
+  /* If there's an error in a class definition but the class is terminated
+     properly and the next class is syntactically correct, the parser should
+     be able to restart at the next class definition. */
+| error ';' {
+    yyclearin; $$ = NULL; }
 ;
 
 /* If no parent is specified, the class inherits from the Object class. */
 class:
   CLASS TYPEID '{' feature_list '}' ';'     {
+    @$ = @6;
+    SET_NODELOC(@6);
     $$ = class_($2,idtable.add_string("Object"),$4, stringtable.add_string(curr_filename)); }
 | CLASS TYPEID INHERITS TYPEID '{' feature_list '}' ';'     { 
+    @$ = @8;
+    SET_NODELOC(@8);
     $$ = class_($2,$4,$6,stringtable.add_string(curr_filename)); }
 ;
 
@@ -194,15 +200,24 @@ feature_list:
     $$ = single_Features($1); }
 | feature_list feature      {
     $$ = append_Features($1, single_Features($2)); }
+  /* The parser should recover from errors in features. */
+| error ';' {
+    yyclearin; $$ = NULL; }
 ;
 
 feature:
   OBJECTID ':' TYPEID ';'       { /* one attr (default initialization) */
     /* TODO It's illegal to have attributes named self. */
+    @$ = @4;
+    SET_NODELOC(@4);
     $$ = attr($1, $3, no_expr()); }
 | OBJECTID ':' TYPEID ASSIGN expr ';'   { /* attr with initialization */
+    @$ = @6;
+    SET_NODELOC(@6);
     $$ = attr($1, $3, $5); }
 | OBJECTID '(' formal_list ')' ':' TYPEID '{' expr '}' ';'     { /* a method */
+    @$ = @10;
+    SET_NODELOC(@10);
     $$ = method($1, $3, $6, $8); }
 ;
 
@@ -218,6 +233,8 @@ formal_list:
 formal:
   OBJECTID ':' TYPEID   {
     /* TODO It's illegal to have formal parameters named 'self'. */
+    @$ = @3;
+    SET_NODELOC(@3);
     $$ = formal($1, $3); }
 ;
 
@@ -233,6 +250,8 @@ case_list:
 case:
   OBJECTID ':' TYPEID DARROW expr ';'   {
     /* TODO It's illegal to bind 'self' in 'case'. */
+    @$ = @6;
+    SET_NODELOC(@6);
     $$ = branch($1, $3, $5); }
 ;
 
@@ -247,70 +266,147 @@ expr_list:
     $$ = append_Expressions($1, single_Expressions($3)); }
 ;
 
+/* let statement */
+let_expr:
+  OBJECTID ':' TYPEID IN expr   {
+    @$ = @5;
+    SET_NODELOC(@5);
+    $$ = let($1, $3, no_expr(), $5); }
+| OBJECTID ':' TYPEID ASSIGN expr IN expr   {
+    @$ = @7;
+    SET_NODELOC(@7);
+    $$ = let($1, $3, $5, $7); }
+| OBJECTID ':' TYPEID ',' let_expr  {
+    @$ = @5;
+    SET_NODELOC(@5);
+    $$ = let($1, $3, no_expr(), $5); }
+| OBJECTID ':' TYPEID ASSIGN expr ',' let_expr  {
+    @$ = @7;
+    SET_NODELOC(@7);
+    $$ = let($1, $3, $5, $7); }
+  /* The parser should recover from errors in a 'let' binding (going
+     on to the next variable). */
+| error IN expr     {
+    yyclearin; $$ = NULL; }
+| error ',' let_expr    {
+    yyclearin; $$ = NULL; }
+;
+
 expr_block:
   expr ';'  {
     $$ = single_Expressions($1); }
-| expr_block expr   {
+| expr_block expr ';'   {
     $$ = append_Expressions($1, single_Expressions($2)); }
+  /* The parser should recover from errors inside an expr block. */
+| error ';'  {
+    yyclearin; $$ = NULL; }
 ;
 
 expr:
   OBJECTID      { /* objects */
+    @$ = @1;
+    SET_NODELOC(@1);
     $$ = object($1); }
 | INT_CONST     { /* integers */
+    @$ = @1;
+    SET_NODELOC(@1);
     $$ = int_const($1); }
 | STR_CONST     { /* string constants */
+    @$ = @1;
+    SET_NODELOC(@1);
     $$ = string_const($1); }
 | BOOL_CONST    { /* booleans */
+    @$ = @1;
+    SET_NODELOC(@1);
     $$ = bool_const($1); }
 | OBJECTID ASSIGN expr    { /* assignment */
+    @$ = @3;
+    SET_NODELOC(@3);
     /* TODO It's illegal to assign to 'self'. */
     $$ = assign($1, $3); }
 | expr '@' TYPEID '.' OBJECTID '(' expr_list ')'    { /* static dispatch */
+    @$ = @8;
+    SET_NODELOC(@8);
     $$ = static_dispatch($1, $3, $5, $7); }
 | expr '.' OBJECTID '(' expr_list ')'   { /* dispatch */
+    @$ = @6;
+    SET_NODELOC(@6);
     $$ = dispatch($1, $3, $5); }
 | OBJECTID '(' expr_list ')'  { /* dispatch (shorthand) */
+    @$ = @4;
+    SET_NODELOC(@4);
     $$ = dispatch(object(idtable.add_string("self")), $1, $3); }
 | IF expr THEN expr ELSE expr FI    { /* cond */ 
+    @$ = @7;
+    SET_NODELOC(@7);
     $$ = cond($2, $4, $6); }
 | WHILE expr LOOP expr POOL     { /* loop */
+    @$ = @5;
+    SET_NODELOC(@5);
     $$ = loop($2, $4); }
 | CASE expr OF case_list ESAC   { /* typcase */ 
+    @$ = @5;
+    SET_NODELOC(@5);
     $$ = typcase($2, $4); }
 | '{' expr_block '}'     { /* block */
+    @$ = @3;
+    SET_NODELOC(@3);
     $$ = block($2); }
 | NEW TYPEID    { /* new */
+    @$ = @2;
+    SET_NODELOC(@2);
     $$ = new_($2); }
 | ISVOID expr   { /* isvoid */
+    @$ = @2;
+    SET_NODELOC(@2);
     $$ = isvoid($2); }
 | expr '+' expr     { /* sumation */
+    @$ = @3;
+    SET_NODELOC(@3);
     $$ = plus($1 ,$3); }
 | expr '-' expr     { /* subtraction */
+    @$ = @3;
+    SET_NODELOC(@3);
     $$ = sub($1 ,$3); }
 | expr '*' expr     { /* multiplication */
+    @$ = @3;
+    SET_NODELOC(@3);
     $$ = mul($1 ,$3); }
 | expr '/' expr     { /* division */
+    @$ = @3;
+    SET_NODELOC(@3);
     $$ = divide($1 ,$3); }
 | '~' expr      { /* negation */
+    @$ = @2;
+    SET_NODELOC(@2);
     $$ = neg($2); }
 | expr '<' expr     { /* less than */
+    @$ = @3;
+    SET_NODELOC(@3);
     $$ = lt($1 ,$3); }
 | expr LE expr     { /* less equal than */
+    @$ = @3;
+    SET_NODELOC(@3);
     $$ = leq($1 ,$3); }
 | expr '=' expr     { /* equal */
+    @$ = @3;
+    SET_NODELOC(@3);
     $$ = eq($1 ,$3); }
 | NOT expr      { /* compensation */
+    @$ = @2;
+    SET_NODELOC(@2);
     $$ = comp($2); }
 | '(' expr ')'  {
+    @$ = @3;
+    SET_NODELOC(@3);
     $$ = $2; }
-| LET OBJECTID ':' TYPEID IN expr   { /* let */
+| LET let_expr  { /* let */
     /* TODO It's illegal to bind 'self' in 'case'. */
     /* When parsing a 'let' expr with multiple identifiers,
        it should be transformed into nested 'let's. */
-    $$ = let($2, $4, no_expr(), $6); }
-| LET OBJECTID ':' TYPEID ASSIGN expr IN expr  {
-    $$ = let($2, $4, $6, $8); }
+    @$ = @2;
+    SET_NODELOC(@2);
+    $$ = $2; }
 ;
 
 /* end of grammar */

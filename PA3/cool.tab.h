@@ -106,7 +106,7 @@ extern int cool_yydebug;
 
 union YYSTYPE
 {
-#line 91 "cool.y" /* yacc.c:1909  */
+#line 87 "cool.y" /* yacc.c:1909  */
 
   Boolean boolean;
   Symbol symbol;
