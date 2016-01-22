@@ -73,8 +73,10 @@
   */
   
   
+  #define MAX_SIZE 1025
+  char err_msg_buf[MAX_SIZE];
   
-  void yyerror(char *s);        /*  defined below; called for each parse error */
+  void yyerror(const char *s);        /*  defined below; called for each parse error */
   extern int yylex();           /*  the entry point to the lexer  */
   
   /************************************************************************/
@@ -133,7 +135,6 @@ documentation for details). */
 %type <program> program
 %type <classes> class_list
 %type <class_> class
-%type <feature> attr
 %type <feature> feature         /* methods and attrs */
 %type <features> feature_list
 %type <formal> formal           /* formal params in method definitions */
@@ -141,11 +142,22 @@ documentation for details). */
 %type <case_> case              /* branch */
 %type <cases> case_list
 %type <expression> expr         /* assign, dispatch, cond, etc. */
-%type <expressions> expr_list
+%type <expressions> expr_list expr_block
+
+%start program
 
 /* Precedence declarations go here. */
-%left 
+%right ASSIGN 
+%left NOT
+%precedence LE '<' '='
+%left '+' '-'
+%left '*' '/'
+%left ISVOID  
+%left '~'
+%left '@'
+%left '.'
 
+//%error-verbose
 
 %%
 /* 
@@ -178,23 +190,18 @@ class:
 feature_list:
   %empty    { /* no features */
     $$ = nil_Features(); }
-| feat ';'  {
+| feature   {
     $$ = single_Features($1); }
-| feature_list feat     {
+| feature_list feature      {
     $$ = append_Features($1, single_Features($2)); }
 ;
 
-attr:
+feature:
   OBJECTID ':' TYPEID ';'       { /* one attr (default initialization) */
     /* TODO It's illegal to have attributes named self. */
-    $$ = attr($1, $3, nil_Expressions()); }
+    $$ = attr($1, $3, no_expr()); }
 | OBJECTID ':' TYPEID ASSIGN expr ';'   { /* attr with initialization */
     $$ = attr($1, $3, $5); }
-; 
-
-feat:
-  attr ';'  {
-  $$ = $1; }
 | OBJECTID '(' formal_list ')' ':' TYPEID '{' expr '}' ';'     { /* a method */
     $$ = method($1, $3, $6, $8); }
 ;
@@ -205,7 +212,7 @@ formal_list:
 | formal    {
     $$ = single_Formals($1); }
 | formal_list ',' formal    {
-    $$ = append_Features($1, single_Formals($3)); }
+    $$ = append_Formals($1, single_Formals($3)); }
 ;
 
 formal:
@@ -217,7 +224,7 @@ formal:
 
 /* Case statement */
 case_list:
-  case      {
+  case      {   /* at least one case statement */
     $$ = single_Cases($1); }
 | case_list case    {
     $$ = append_Cases($1, single_Cases($2)); }
@@ -237,8 +244,13 @@ expr_list:
 | expr      {
     $$ = single_Expressions($1); }
 | expr_list ',' expr    {
-    $$ = append_Expressions($1, single_Expressions($2)); }
-| expr_list ';' expr    {
+    $$ = append_Expressions($1, single_Expressions($3)); }
+;
+
+expr_block:
+  expr ';'  {
+    $$ = single_Expressions($1); }
+| expr_block expr   {
     $$ = append_Expressions($1, single_Expressions($2)); }
 ;
 
@@ -258,16 +270,15 @@ expr:
     $$ = static_dispatch($1, $3, $5, $7); }
 | expr '.' OBJECTID '(' expr_list ')'   { /* dispatch */
     $$ = dispatch($1, $3, $5); }
-| OBJECT '(' expr_list ')'  { /* dispatch (shorthand) */
-    $$ = dispatch(idtable.add_string("self"), $1, $3); }
+| OBJECTID '(' expr_list ')'  { /* dispatch (shorthand) */
+    $$ = dispatch(object(idtable.add_string("self")), $1, $3); }
 | IF expr THEN expr ELSE expr FI    { /* cond */ 
     $$ = cond($2, $4, $6); }
 | WHILE expr LOOP expr POOL     { /* loop */
     $$ = loop($2, $4); }
 | CASE expr OF case_list ESAC   { /* typcase */ 
     $$ = typcase($2, $4); }
-| '{' expr_list '}'     { /* block */
-    /* FIXME Every block has at least one expression. */
+| '{' expr_block '}'     { /* block */
     $$ = block($2); }
 | NEW TYPEID    { /* new */
     $$ = new_($2); }
@@ -282,7 +293,7 @@ expr:
 | expr '/' expr     { /* division */
     $$ = divide($1 ,$3); }
 | '~' expr      { /* negation */
-    $$ = neg($1); }
+    $$ = neg($2); }
 | expr '<' expr     { /* less than */
     $$ = lt($1 ,$3); }
 | expr LE expr     { /* less equal than */
@@ -290,20 +301,23 @@ expr:
 | expr '=' expr     { /* equal */
     $$ = eq($1 ,$3); }
 | NOT expr      { /* compensation */
-    $$ = comp($1); }
+    $$ = comp($2); }
 | '(' expr ')'  {
     $$ = $2; }
-| LET { /* let */
+| LET OBJECTID ':' TYPEID IN expr   { /* let */
     /* TODO It's illegal to bind 'self' in 'case'. */
-    /* TODO Every 'let' has at least one identifier. */
-    }
+    /* When parsing a 'let' expr with multiple identifiers,
+       it should be transformed into nested 'let's. */
+    $$ = let($2, $4, no_expr(), $6); }
+| LET OBJECTID ':' TYPEID ASSIGN expr IN expr  {
+    $$ = let($2, $4, $6, $8); }
 ;
 
 /* end of grammar */
 %%
 
 /* This function is called automatically when Bison detects a parse error. */
-void yyerror(char *s)
+void yyerror(const char *s)
 {
   extern int curr_lineno;
   
