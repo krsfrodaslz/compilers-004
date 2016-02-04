@@ -6,10 +6,6 @@ CFLAGS=-g -Wall -Wno-unused -Wno-deprecated -Wno-write-strings -DDEBUG $(INC)
 
 LIB= -lfl
 
-AR= gar
-ARCHIVE_NEW= -cr
-RANLIB= gar -qs
-
 CFILES= $(shell ls *.cc) cool-parse.cc
 
 OBJS= $(patsubst %cc, %o, $(filter %.cc, $(CFILES)))
