@@ -326,8 +326,13 @@ void program_class::semant()
         }
 
         /* classes can only inherite from classes that have definitions somewhere */
+        /* update: a class can not inherite from `Int', `Bool' nor `String' */
         if (class_set.find(it->second) == class_set.end()) {
             classtable->semant_error(bt[it->first]) << "class `" << it->second << "' undefined" << endl;
+            exit(1);
+        }
+        if (it->second == "Int" || it->second  == "Bool" || it->second == "String") {
+            classtable->semant_error(bt[it->first]) << "can not inherite from `" << it->second << "'" << endl;
             exit(1);
         }
     }
