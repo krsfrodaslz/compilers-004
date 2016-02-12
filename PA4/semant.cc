@@ -1,6 +1,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <map>
+#include <set>
 #include "semant.h"
 #include "utilities.h"
 
@@ -84,7 +86,6 @@ static void initialize_constants(void)
 ClassTable::ClassTable(Classes classes) : semant_errors(0) , error_stream(cerr) {
 
     /* Fill this in */
-    install_basic_classes();
 }
 
 void ClassTable::install_basic_classes() {
@@ -187,7 +188,6 @@ void ClassTable::install_basic_classes() {
 						      no_expr()))),
 	       filename);
 
-    // TODO add those previous `Class_'s into classtable
 }
 
 ////////////////////////////////////////////////////////////////////
@@ -245,11 +245,138 @@ void program_class::semant()
     ClassTable *classtable = new ClassTable(classes);
 
     /* some semantic analysis code may go here */
-    /* TODO 1. check inheritance graph
-     * 2. check the program class by class */
+
+    /* check inheritance graph */
+    using std::string;
+    std::map<string, string> ig;
+    std::map<string, int> class_set;
+    std::map<string, Class_> bt;
+
+    // built-in classes
+    Symbol filename = stringtable.add_string("<basic class>");
+
+    Class_ Object_class = class_(Object, No_class,
+        append_Features(
+            append_Features(
+                single_Features(method(cool_abort, nil_Formals(), Object, no_expr())),
+                single_Features(method(type_name, nil_Formals(), Str, no_expr()))
+            ),
+            single_Features(method(idtable.add_string("copy"), nil_Formals(), SELF_TYPE, no_expr()))
+        ), filename);
+
+    Class_ IO_class = class_(IO, Object,
+        append_Features(
+            append_Features(
+                append_Features(
+                    single_Features(method(out_string, single_Formals(formal(arg, Str)), SELF_TYPE, no_expr())),
+                    single_Features(method(out_int, single_Formals(formal(arg, Int)), SELF_TYPE, no_expr()))
+                ),
+                single_Features(method(in_string, nil_Formals(), Str, no_expr()))
+            ),
+            single_Features(method(in_int, nil_Formals(), Int, no_expr()))
+        ), filename);
+
+    Class_ Int_class = class_(Int, Object,
+        single_Features(attr(val, prim_slot, no_expr())), filename);
+
+    Class_ Bool_class = class_(Bool, Object, 
+        single_Features(attr(val, prim_slot, no_expr())),filename); 
+
+    Class_ Str_class = class_(Str, Object,
+        append_Features(
+            append_Features(
+                append_Features(
+                    append_Features(
+                        single_Features(attr(val, Int, no_expr())),
+                        single_Features(attr(str_field, prim_slot, no_expr()))
+                    ),
+                    single_Features(method(length, nil_Formals(), Int, no_expr()))
+                ),
+                single_Features(method(concat, single_Formals(formal(arg, Str)), Str, no_expr()))
+            ),
+            single_Features(method(substr, append_Formals(single_Formals(formal(arg, Int)), 
+                single_Formals(formal(arg2, Int))), Str, no_expr()))
+        ), filename);
+
+    classes = append_Classes(single_Classes(Str_class), classes);
+    classes = append_Classes(single_Classes(Bool_class), classes);
+    classes = append_Classes(single_Classes(Int_class), classes);
+    classes = append_Classes(single_Classes(IO_class), classes);
+    classes = append_Classes(single_Classes(Object_class), classes);
+
+    for (int it = classes->first(); classes->more(it); it = classes->next(it)) {
+        Class_ cls = classes->nth(it);
+        class_set[cls->get_name()->get_string()] += 1;
+        ig.insert(std::make_pair(cls->get_name()->get_string(), cls->get_parent()->get_string()));
+        bt.insert(std::make_pair(cls->get_name()->get_string(), cls));
+    }
+    class_set["_no_class"] = 1;
+
+    /* class `Main' should be defined */
+    if (class_set.find("Main") == class_set.end()) {
+        classtable->semant_error() << "class `Main' should be defined" << endl;
+        exit(1);
+    }
+
+    for (std::map<string, string>::iterator it = ig.begin(); it != ig.end(); ++it) {
+        /* classes may not be redefined */
+        if (class_set[it->first] > 1) {
+            classtable->semant_error(bt[it->first]) << "class `" << it->first << "' redefined" << endl;
+            exit(1);
+        }
+
+        /* classes can only inherite from classes that have definitions somewhere */
+        if (class_set.find(it->second) == class_set.end()) {
+            classtable->semant_error(bt[it->first]) << "class `" << it->second << "' undefined" << endl;
+            exit(1);
+        }
+    }
+
+    /* use DFS to check if a cycle exists */
+    /* update: the problem is much simpler cuz only single inheritance is allowed */
+
+    /* Notice that iterators may become invalid if we modify the vector on the fly. */
+    std::set<string> marker, checked;
+    checked.insert("_no_class");
+    for (std::map<string, string>::iterator it = ig.begin(); it != ig.end(); ++it) {
+        std::map<string, string>::iterator c = it;
+        // iterate until a cycle is found or we meet `No_class'
+        while (!checked.count(c->first)) {
+            marker.insert(c->first);
+            checked.insert(c->first);
+            std::map<string, string>::iterator c_new = ig.find(ig[c->first]);
+            // meet `No_class'
+            if (c_new == ig.end()) {
+                break;
+            }
+            if (marker.count(c_new->first)) {
+                classtable->semant_error();
+                cerr << "inheritance graph is cyclic: class `" << it->first << "'" << endl;
+                exit(1);
+            }
+            c = c_new;
+        }
+        marker.clear();
+    }
 
     if (classtable->errors()) {
         cerr << "Compilation halted due to static semantic errors." << endl;
         exit(1);
     }
+
+
+    /* examine the program class by class */
 }
+
+
+
+/* implementation of custom interfaces */
+
+Symbol class__class::get_name() const {
+    return name;
+}
+
+Symbol class__class::get_parent() const {
+    return parent;
+}
+

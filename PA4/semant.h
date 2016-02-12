@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <iostream>  
 #include <vector>
+#include <map>
 #include "cool-tree.h"
 #include "stringtab.h"
 #include "symtab.h"
