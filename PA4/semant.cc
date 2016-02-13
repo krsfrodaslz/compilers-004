@@ -338,39 +338,40 @@ void program_class::semant()
     }
 
     /* use DFS to check if a cycle exists */
-    /* update: the problem is much simpler cuz only single inheritance is allowed */
+    /* update: the problem is much simpler cuz only single inheritance is allowed 
+     *         which means that the final result is a single inheritance tree */
 
     /* Notice that iterators may become invalid if we modify the vector on the fly. */
-    std::set<string> marker, checked;
+    std::set<string> marked, checked;
     checked.insert("_no_class");
     for (std::map<string, string>::iterator it = ig.begin(); it != ig.end(); ++it) {
         std::map<string, string>::iterator c = it;
         // iterate until a cycle is found or we meet `No_class'
         while (!checked.count(c->first)) {
-            marker.insert(c->first);
+            marked.insert(c->first);
             checked.insert(c->first);
             std::map<string, string>::iterator c_new = ig.find(ig[c->first]);
             // meet `No_class'
             if (c_new == ig.end()) {
                 break;
             }
-            if (marker.count(c_new->first)) {
+            if (marked.count(c_new->first)) {
                 classtable->semant_error();
                 cerr << "inheritance graph is cyclic: class `" << it->first << "'" << endl;
                 exit(1);
             }
             c = c_new;
         }
-        marker.clear();
+        marked.clear();
     }
+
+    /* examine the program following the inheritance path (top-down) */
+
 
     if (classtable->errors()) {
         cerr << "Compilation halted due to static semantic errors." << endl;
         exit(1);
     }
-
-
-    /* examine the program class by class */
 }
 
 
