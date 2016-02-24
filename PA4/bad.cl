@@ -10,20 +10,6 @@ class C inherits B {
 	};
 };
 
-class B inherits D {
-};
-
-class D inherits E {
-};
-
-class F inherits D {
-};
-
-class G inherits E {
-};
-
-class E {};
-
 Class Main {
 	main():C {
 	 {

@@ -12,6 +12,8 @@
 #include "tree.h"
 #include "cool-tree.handcode.h"
 
+struct type_env;
+typedef type_env* env_t;
 
 // define the class for phylum
 // define simple phylum - Program
@@ -35,8 +37,10 @@ class Class__class : public tree_node {
 public:
    tree_node *copy()		 { return copy_Class_(); }
    virtual Class_ copy_Class_() = 0;
-   virtual Symbol get_name() const = 0;
-   virtual Symbol get_parent() const = 0;
+   virtual Symbol get_name() = 0;
+   virtual Symbol get_parent() = 0;
+   virtual void semant(env_t) = 0;
+   virtual Feature has_method(Symbol) = 0;
 
 #ifdef Class__EXTRAS
    Class__EXTRAS
@@ -52,6 +56,10 @@ public:
    tree_node *copy()		 { return copy_Feature(); }
    virtual Feature copy_Feature() = 0;
 
+   virtual Symbol get_name() = 0;
+   virtual Symbol get_type() = 0;
+   virtual void semant(env_t) = 0;
+   virtual bool is_method() = 0;
 #ifdef Feature_EXTRAS
    Feature_EXTRAS
 #endif
@@ -163,8 +171,11 @@ public:
    }
    Class_ copy_Class_();
    void dump(ostream& stream, int n);
-   Symbol get_name() const;
-   Symbol get_parent() const;
+
+   Symbol get_name();
+   Symbol get_parent();
+   void semant(env_t);
+   Feature has_method(Symbol);
 
 #ifdef Class__SHARED_EXTRAS
    Class__SHARED_EXTRAS
@@ -192,6 +203,11 @@ public:
    Feature copy_Feature();
    void dump(ostream& stream, int n);
 
+   Symbol get_name();
+   Symbol get_type();
+   void semant(env_t);
+   bool is_method();
+
 #ifdef Feature_SHARED_EXTRAS
    Feature_SHARED_EXTRAS
 #endif
@@ -215,6 +231,11 @@ public:
    }
    Feature copy_Feature();
    void dump(ostream& stream, int n);
+
+   Symbol get_name();
+   Symbol get_type();
+   void semant(env_t);
+   bool is_method();
 
 #ifdef Feature_SHARED_EXTRAS
    Feature_SHARED_EXTRAS
