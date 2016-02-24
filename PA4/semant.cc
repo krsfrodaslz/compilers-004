@@ -210,18 +210,18 @@ void program_class::semant()
     using std::make_pair;
     using std::string;
 
-    set<string> class_set;
+    set<Symbol> class_set;
     set<Class_> uninserted;
-    map<string, Class_> bt;
+    //map<Symbol, Class_> bt;
     for (int it = classes->first(); classes->more(it); it = classes->next(it)) {
         Class_ cls = classes->nth(it);
         class_set.insert(cls->get_name());
         uninserted.insert(cls);
-        bt.insert(make_pair(cls->get_name(), cls));
+        //bt.insert(make_pair(cls->get_name(), cls));
     }
 
     /* class `Main' should be defined */
-    if (class_set.find("Main") == class_set.end()) {
+    if (class_set.find(Main) == class_set.end()) {
         classtable->semant_error() << "class `Main' should be defined\n";
         exit(1);
     }
@@ -230,7 +230,7 @@ void program_class::semant()
     int nerror = 0, nerror_old;
 
     inheritance_tree ig;
-    ig.set_root(new inheritance_tree_node(bt["Object"]));
+    ig.set_root(new inheritance_tree_node(Object_class));
     uninserted.erase(Object_class);
 
     /* keep inserting new nodes until we get the final tree */
@@ -315,11 +315,10 @@ void program_class::semant()
 
     env_t env;
     env->names = new SymbolTable<Symbol, Symbol>();
-    env->curr_class = 0;
     env->ct = classtable;
-    env->ig = ig;
+    env->ig = &ig;
     
-    check_type(ig.root, env);
+    check_type(ig._root, env);
 
 finish:
     if (classtable->errors()) {
@@ -329,18 +328,12 @@ finish:
 }
 
 void check_type(inheritance_tree_node* node, env_t env) {
-
-    env->names->enterscope();
-
     env->curr_class = node->_class_node;
     
     Class_ cls = node->_class_node;
-    Features fts = cls->features;
+    Features fts = cls->get_features();
 
-    /* add all attrs to the symbol table */
-    for (int it = fts->first(); fts->more(it); it = fts->next(it)) {
-        fts->nth(it)->add_to_env();
-    }
+    env->names->enterscope();
 
     /* perform type checking in current class recursively */
     cls->semant(env);
@@ -375,7 +368,7 @@ void class__class::semant(env_t env) {
 
     std::set<Symbol> method_names, attr_names;
 
-    for(int i = features->first(); features->more(i); i = features->next(i)) {
+    for (int i = features->first(); features->more(i); i = features->next(i)) {
 
         Feature ft = features->nth(i);
         if (ft->is_method() && env->names->probe(ft->get_name())) {
@@ -384,7 +377,11 @@ void class__class::semant(env_t env) {
             if (env->names->lookup(ft->get_name())) {
                 env->ct->semant_error(env->curr_class) << "attribute redefined: " << ft->get_name() << "\n";
             }
-            env->names->addid(ft->get_name(), ft->get_type());
+            Symbol t = ft->get_type();
+            if (t == SELF_TYPE) {
+                t = name;
+            }
+            env->names->addid(ft->get_name(), new Symbol(t));
         }
 
         features->nth(i)->semant(env);
@@ -403,10 +400,11 @@ void class__class::semant(env_t env) {
  * 2. a formal param hides any definition of an attribute of the same name
  * 3. method overriding rule (see the manual for details)
  * 4. formal param cannot have type SELF_TYPE
+ * 5. method environment is global to the entire program
  */
 void method_class::semant(env_t env) {
 
-    inheritance_tree_node* parent = ct->ig->search(ct->curr_class->get_parent());
+    inheritance_tree_node* parent = env->ig->search(env->curr_class->get_parent());
     Feature inherited_version = 0;
     while (parent) {
         inherited_version = parent->_class_node->has_method(name);
@@ -416,8 +414,8 @@ void method_class::semant(env_t env) {
     }
     if (inherited_version) {
         // TODO
-        if (!is_signature_consistent(inherited_version, this)) {
-            env->ct->semant_error(ct->curr_class) << "imcompatible signature of overrided method `"
+        if (!this->is_signature_consistent(inherited_version)) {
+            env->ct->semant_error(env->curr_class) << "imcompatible signature of overrided method `"
                 << name << "'\n";
         }
     }
@@ -427,21 +425,28 @@ void method_class::semant(env_t env) {
     for(int i = formals->first(); formals->more(i); i = formals->next(i)) {
         Formal fm = formals->nth(i);
         if (env->names->probe(fm->get_name())) {
-            env->ct->semant_error(ct->curr_class) << "duplicate formal parameters in method `"
+            env->ct->semant_error(env->curr_class) << "duplicate formal parameters in method `"
                 << name << "'\n";
         }
-        if (fm->get_type() == self_type) {
-            env->ct->semant_error(ct->curr_class) << "formal parameter cannot have type `SELF_TYPE'\n";
+        if (fm->get_type() == SELF_TYPE) {
+            env->ct->semant_error(env->curr_class) << "formal parameter cannot have type `SELF_TYPE'\n";
+        } else {
+            type_exists(fm->get_type(), env);
         }
-        env->names->addid(fm->get_name(), &fm->get_type());
+        env->names->addid(fm->get_name(), new Symbol(fm->get_type()));
     }
 
     expr->semant(env);
-    expr_type = expr->get_type();
-    if (!env->ig->is_subclass(return_type, expr_type)) {
-        env->ct->semant_error(ct->curr_class) << "return type " << expr_type
+    Symbol expr_type = expr->get_type();
+    Symbol rt = return_type;
+    if (rt == SELF_TYPE) {
+        rt = env->curr_class->get_name();
+    }
+    type_exists(rt, env);
+    if (!env->ig->is_subclass(expr_type, rt)) {
+        env->ct->semant_error(env->curr_class) << "return type " << expr_type
             << " of method `" << name << "' does not confirm to declared return type "
-            << return_type << "\n";
+            << rt << "\n";
     }
 
 
@@ -449,49 +454,250 @@ void method_class::semant(env_t env) {
 }
 
 /* 1. it's illegal to have attributes named self
+ * 2. attributes are visible within their initialization expressions
  */
 void attr_class::semant(env_t env) {
     if (name == self) {
-        env->ct->semant_error(ct->curr_class) << "illegal attribute named self\n";
+        env->ct->semant_error(env->curr_class) << "illegal attribute named self\n";
     }
-
-    init->semant(env_t);
-    init_type = init->get_type();
+    
+    init->semant(env);
+    Symbol init_type = init->get_type();
+    Symbol td = type_decl;
+    if (td == SELF_TYPE) {
+        td = env->curr_class->get_name();
+    }
+    type_exists(td, env);
 
     if (init_type != No_type) {
-        if (!env->ig->is_subclass(init_type, type_decl)) {
+        if (!env->ig->is_subclass(init_type, td)) {
             env->ct->semant_error(env->curr_class) << "type " << init_type
                 << " of initialization expression does not confirm to declared type "
-                << type_decl << "\n";
+                << td << "\n";
         }
     }
 }
 
 /* 1. given C the dynamic type of expr, the branch with the least 
  *    type T (C <= T) is selected. otherwise, a runtime error is generated
- * 2. the type of the identifier in each branch must be unique
+ * 2. the type of the identifier in each branch must be unique and cannot be SELF_TYPE
  * 3. the static type of the case statement is the LUB of all branches
  */
-void typcase_clas::semant(env_t env) {
+void typcase_class::semant(env_t env) {
     std::set<Symbol> type_sets;
     for (int i = cases->first(); cases->more(i); i = cases->next(i)) {
         Case c = cases->nth(i);
-        if (type_sets.count(c.get_type())) {
+        if (c->get_type() == SELF_TYPE) {
+            env->ct->semant_error(env->curr_class) << "type of identifiers in case statements cannot be `SELF_TYPE'\n";
+        }
+        if (type_sets.count(c->get_type())) {
             env->ct->semant_error(env->curr_class) << "duplicate branches in case statement\n";
         }
-        type_sets.insert(c.get_type());
+        type_sets.insert(c->get_type());
 
         c->semant(env);
+        type = env->ig->least_common_ancester(type, c->get_return_type());
     }
 }
 
 void branch_class::semant(env_t env) {
     env->names->enterscope();
-    env->names->addid(name, &type_decl);
+    env->names->addid(name, new Symbol(type_decl));
     expr->semant(env);
     env->names->exitscope();
 }
 
+void object_class::semant(env_t env) {
+    Symbol* object_type = env->names->lookup(name);
+    if (!object_type) {
+        env->ct->semant_error(env->curr_class) << "undeclared variable "
+            << name << "\n";
+        type = Object;
+        return;
+    }
+    type = *object_type;
+}
+
+/* 1. the type of the whole assignment expression is the type of `expr'
+ */
+void assign_class::semant(env_t env) {
+    expr->semant(env);
+    Symbol expr_type = expr->get_type();
+    Symbol object_type = *(env->names->lookup(name));
+    if (expr_type == SELF_TYPE) {
+        expr_type = env->curr_class->get_name();
+    }
+    if (!env->ig->is_subclass(expr_type, object_type)) {
+        env->ct->semant_error(env->curr_class) << "type " << expr_type
+            << " of expression does not confirm to type " << object_type
+            << " of variable `" << name << "'\n";
+    }
+    type = expr_type;
+}
+
+void bool_const_class::semant(env_t env) {
+    type = Bool;
+}
+
+void string_const_class::semant(env_t env) {
+    type = Str;
+}
+
+void int_const_class::semant(env_t env) {
+    type = Int;
+}
+
+void new__class::semant(env_t env) {
+    if (type_name != SELF_TYPE) {
+        type_exists(type_name, env);
+    }
+    type = type_name;
+}
+
+/* 1. type of e_0 must have a method f
+ * 2. all arguments and formal parameters must match with each other
+ */
+void static_dispatch_class::semant(env_t env) {
+}
+
+void dispatch_class::semant(env_t env) {
+}
+
+void cond_class::semant(env_t env) {
+    pred->semant(env);
+    if (pred->get_type() != Bool) {
+        env->ct->semant_error(env->curr_class) << "predicate of 'if' does not have type `Bool'\n";
+    }
+    then_exp->semant(env);
+    else_exp->semant(env);
+    type = env->ig->least_common_ancester(then_exp->get_type(), else_exp->get_type());
+}
+
+void block_class::semant(env_t env) {
+    Expression e;
+    for (int i = body->first(); body->more(i); i = body->next(i)) {
+        e = body->nth(i);
+        e->semant(env);
+    }
+    type = e->get_type();
+}
+
+void let_class::semant(env_t env) {
+    Symbol td = type_decl;
+    if (type_decl != SELF_TYPE) {
+        type_exists(type_decl, env);
+        td = env->curr_class->get_name();
+    }
+
+    init->semant(env);
+    Symbol init_type = init->get_type();
+    if (init_type != No_type) {
+        if (!env->ig->is_subclass(init_type, td)) {
+            env->ct->semant_error(env->curr_class) << "type " << init_type
+                << " of initialzation expression does not confirm to type "
+                << td << " of variable `" << identifier << "'\n";
+        }
+    }
+
+    env->names->enterscope();
+    env->names->addid(identifier, new Symbol(td));
+    body->semant(env);
+
+    env->names->exitscope();
+    type = body->get_type();
+}
+
+void loop_class::semant(env_t env) {
+    pred->semant(env);
+    if (pred->get_type() != Bool) {
+        env->ct->semant_error(env->curr_class) << "predicate of 'loop' does not have type `Bool'\n";
+    }
+    body->semant(env);
+    type = Object;
+}
+
+void isvoid_class::semant(env_t env) {
+    e1->semant(env);
+    type = Bool;
+}
+
+void comp_class::semant(env_t env) {
+    e1->semant(env);
+    if (e1->get_type() != Bool) {
+        env->ct->semant_error(env->curr_class) << "'not' operator is undefined to types other than `Bool'\n";
+        type = Object;
+        return;
+    }
+    type = Bool;
+}
+
+void neg_class::semant(env_t env) {
+    e1->semant(env);
+    if (e1->get_type() != Int) {
+        env->ct->semant_error(env->curr_class) << "'~' operator is undefined to types other than `Int'\n";
+        type = Object;
+        return;
+    }
+    type = Int;
+}
+
+#define CHECK_BINARY_OPERATOR(op) \
+    e1->semant(env); \
+    e2->semant(env); \
+    if (e1->get_type() != Int || e2->get_type() != Int) { \
+        env->ct->semant_error(env->curr_class) << "'op' operator is undefined to types other than `Int'\n"; \
+        type = Object; \
+        return; \
+    }
+
+void lt_class::semant(env_t env) {
+    CHECK_BINARY_OPERATOR(<);
+    type = Bool;
+}
+
+void leq_class::semant(env_t env) {
+    CHECK_BINARY_OPERATOR(<=);
+    type = Bool;
+}
+
+void plus_class::semant(env_t env) {
+    CHECK_BINARY_OPERATOR(+);
+    type = Int;
+}
+
+void sub_class::semant(env_t env) {
+    CHECK_BINARY_OPERATOR(-);
+    type = Int;
+}
+
+void mul_class::semant(env_t env) {
+    CHECK_BINARY_OPERATOR(*);
+    type = Int;
+}
+
+void divide_class::semant(env_t env) {
+    CHECK_BINARY_OPERATOR(/);
+    type = Int;
+}
+
+void eq_class::semant(env_t env) {
+    e1->semant(env);
+    e2->semant(env);
+    Symbol e1_type = e1->get_type();
+    Symbol e2_type = e2->get_type();
+    if ((e1_type == Int || e1_type == Bool || e1_type == Str ||
+            e2_type == Int || e2_type == Bool || e2_type == Str) &&
+            e1_type != e2_type) {
+        env->ct->semant_error(env->curr_class) << "'=' operator is undefined to operands of type "
+            << e1_type << " and type " << e2_type << "\n";
+        type = Object;
+    }
+    type = Bool;
+}
+
+void no_expr_class::semant(env_t env) {
+    type = No_type;
+}
 
 /* ---------------------------------------- */
 /* extended interface */ 
@@ -503,6 +709,10 @@ Symbol class__class::get_name() {
 
 Symbol class__class::get_parent() {
     return parent;
+}
+
+Features class__class::get_features() {
+    return features;
 }
 
 Feature class__class::has_method(Symbol ft) {
@@ -526,6 +736,10 @@ bool method_class::is_method() {
     return true;
 }
 
+bool method_class::is_signature_consistent(Feature m) {
+    return true;
+}
+
 Symbol attr_class::get_name() {
     return name;
 }
@@ -538,10 +752,87 @@ bool attr_class::is_method() {
     return false;
 }
 
+Symbol formal_class::get_name() {
+    return name;
+}
+
+Symbol formal_class::get_type() {
+    return type_decl;
+}
+
+Symbol branch_class::get_type() {
+    return type_decl;
+}
+
+Symbol branch_class::get_return_type() {
+    return expr->get_type();
+}
+
 
 /* ---------------------------------------- */
 /* inheritance graph */
 /* ---------------------------------------- */
+inheritance_tree::inheritance_tree():
+    _root(0)
+{}
+
+void inheritance_tree::set_root(inheritance_tree_node* root) {
+    _root = root;
+}
+
+inheritance_tree_node* inheritance_tree::search(Symbol class_name) {
+    if (!_root) {
+        return 0;
+    }
+    return search(_root, class_name);
+}
+
+inheritance_tree::err_code inheritance_tree::insert(Symbol parent, Class_ class_node) {
+    /* classes may not be redefined */
+    if (search(class_node->get_name())) {
+        return CLASS_REDEFINED;
+    }
+
+    /* classes can only inherite from classes that have definitions somewhere */
+    /* update: a class can not inherite from `Int', `Bool' nor `String' */
+    inheritance_tree_node* parent_node = search(parent);
+    if (!parent_node) {
+        return PARENT_UNDEFINED;
+    } else if (parent_node->_class_node->get_name() == Int ||
+            parent_node->_class_node->get_name() == Bool ||
+            parent_node->_class_node->get_name() == Str ||
+            parent_node->_class_node->get_name() == SELF_TYPE) {
+        return ILLEGAL_PARENT;
+    }
+
+    inheritance_tree_node* new_node = new inheritance_tree_node(class_node);
+    new_node->_parent = parent_node;
+
+    inheritance_tree_node* sib = parent_node->_child;
+    if (!sib) {
+        parent_node->_child = new_node;
+        return NO_ERROR;
+    }
+    while (sib->_sibling) {
+        sib = sib->_sibling;
+    }
+    sib->_sibling = new_node;
+    return NO_ERROR;
+}
+
+inheritance_tree_node* inheritance_tree::search(inheritance_tree_node* node, Symbol class_name) {
+    inheritance_tree_node* ret = 0;
+    if (node->_class_node->get_name() == class_name) {
+        return node;
+    } else if (node->_sibling && (ret = search(node->_sibling, class_name))) {
+        return ret;
+    } else if (node->_child && (ret = search(node->_child, class_name))) {
+        return ret;
+    } else {
+        return 0;
+    }
+}
+
 bool inheritance_tree::is_subclass(Symbol a, Symbol b) {
     inheritance_tree_node* na = search(a);
     if (na) {
@@ -553,4 +844,42 @@ bool inheritance_tree::is_subclass(Symbol a, Symbol b) {
         }
     }
     return false;
+}
+
+Symbol inheritance_tree::least_common_ancester(Symbol a, Symbol b) {
+    if (!a) {
+        return b;
+    }
+    if (!b) {
+        return a;
+    }
+
+    std::set<Symbol> ancesters_a;
+    inheritance_tree_node* node = search(a);
+    while (node) {
+        ancesters_a.insert(node->_class_node->get_name());
+        node = node->_parent;
+    }
+    node = search(b);
+    while (node) {
+        if (ancesters_a.count(node->_class_node->get_name())) {
+            break;
+        }
+        node = node->_parent;
+    }
+    return node->_class_node->get_name();
+}
+
+bool inheritance_tree::has_type(Symbol t) {
+    if (search(t)) {
+        return true;
+    }
+    return false;
+}
+
+void type_exists(Symbol t, env_t env) {
+    if (!env->ig->has_type(type_name)) {
+        env->ct->semant_error(env->curr_class) << "type " << type_name
+            << " undefined\n";
+    }
 }

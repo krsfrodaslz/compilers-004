@@ -37,8 +37,10 @@ class Class__class : public tree_node {
 public:
    tree_node *copy()		 { return copy_Class_(); }
    virtual Class_ copy_Class_() = 0;
+
    virtual Symbol get_name() = 0;
    virtual Symbol get_parent() = 0;
+   virtual Features get_features() = 0;
    virtual void semant(env_t) = 0;
    virtual Feature has_method(Symbol) = 0;
 
@@ -74,6 +76,9 @@ public:
    tree_node *copy()		 { return copy_Formal(); }
    virtual Formal copy_Formal() = 0;
 
+   virtual Symbol get_name() = 0;
+   virtual Symbol get_type() = 0;
+
 #ifdef Formal_EXTRAS
    Formal_EXTRAS
 #endif
@@ -88,6 +93,8 @@ public:
    tree_node *copy()		 { return copy_Expression(); }
    virtual Expression copy_Expression() = 0;
 
+   virtual void semant(env_t) = 0;
+
 #ifdef Expression_EXTRAS
    Expression_EXTRAS
 #endif
@@ -101,6 +108,10 @@ class Case_class : public tree_node {
 public:
    tree_node *copy()		 { return copy_Case(); }
    virtual Case copy_Case() = 0;
+
+   virtual Symbol get_type() = 0;
+   virtual Symbol get_return_type() = 0;
+   virtual void semant(env_t) = 0;
 
 #ifdef Case_EXTRAS
    Case_EXTRAS
@@ -174,6 +185,7 @@ public:
 
    Symbol get_name();
    Symbol get_parent();
+   Features get_features();
    void semant(env_t);
    Feature has_method(Symbol);
 
@@ -207,6 +219,7 @@ public:
    Symbol get_type();
    void semant(env_t);
    bool is_method();
+   bool is_signature_consistent(Feature m);
 
 #ifdef Feature_SHARED_EXTRAS
    Feature_SHARED_EXTRAS
@@ -259,6 +272,9 @@ public:
    Formal copy_Formal();
    void dump(ostream& stream, int n);
 
+   Symbol get_name();
+   Symbol get_type();
+
 #ifdef Formal_SHARED_EXTRAS
    Formal_SHARED_EXTRAS
 #endif
@@ -283,6 +299,10 @@ public:
    Case copy_Case();
    void dump(ostream& stream, int n);
 
+   Symbol get_type();
+   Symbol get_return_type();
+   void semant(env_t);
+
 #ifdef Case_SHARED_EXTRAS
    Case_SHARED_EXTRAS
 #endif
@@ -304,6 +324,8 @@ public:
    }
    Expression copy_Expression();
    void dump(ostream& stream, int n);
+
+   void semant(env_t);
 
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
@@ -331,6 +353,8 @@ public:
    Expression copy_Expression();
    void dump(ostream& stream, int n);
 
+   void semant(env_t);
+
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
 #endif
@@ -354,6 +378,8 @@ public:
    }
    Expression copy_Expression();
    void dump(ostream& stream, int n);
+
+   void semant(env_t);
 
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
@@ -379,6 +405,8 @@ public:
    Expression copy_Expression();
    void dump(ostream& stream, int n);
 
+   void semant(env_t);
+
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
 #endif
@@ -400,6 +428,8 @@ public:
    }
    Expression copy_Expression();
    void dump(ostream& stream, int n);
+
+   void semant(env_t);
 
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
@@ -423,6 +453,8 @@ public:
    Expression copy_Expression();
    void dump(ostream& stream, int n);
 
+   void semant(env_t);
+
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
 #endif
@@ -442,6 +474,8 @@ public:
    }
    Expression copy_Expression();
    void dump(ostream& stream, int n);
+
+   void semant(env_t);
 
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
@@ -469,6 +503,8 @@ public:
    Expression copy_Expression();
    void dump(ostream& stream, int n);
 
+   void semant(env_t);
+
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
 #endif
@@ -490,6 +526,8 @@ public:
    }
    Expression copy_Expression();
    void dump(ostream& stream, int n);
+
+   void semant(env_t);
 
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
@@ -513,6 +551,8 @@ public:
    Expression copy_Expression();
    void dump(ostream& stream, int n);
 
+   void semant(env_t);
+
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
 #endif
@@ -534,6 +574,8 @@ public:
    }
    Expression copy_Expression();
    void dump(ostream& stream, int n);
+
+   void semant(env_t);
 
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
@@ -557,6 +599,8 @@ public:
    Expression copy_Expression();
    void dump(ostream& stream, int n);
 
+   void semant(env_t);
+
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
 #endif
@@ -576,6 +620,8 @@ public:
    }
    Expression copy_Expression();
    void dump(ostream& stream, int n);
+
+   void semant(env_t);
 
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
@@ -599,6 +645,8 @@ public:
    Expression copy_Expression();
    void dump(ostream& stream, int n);
 
+   void semant(env_t);
+
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
 #endif
@@ -620,6 +668,8 @@ public:
    }
    Expression copy_Expression();
    void dump(ostream& stream, int n);
+
+   void semant(env_t);
 
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
@@ -643,6 +693,8 @@ public:
    Expression copy_Expression();
    void dump(ostream& stream, int n);
 
+   void semant(env_t);
+
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
 #endif
@@ -662,6 +714,8 @@ public:
    }
    Expression copy_Expression();
    void dump(ostream& stream, int n);
+
+   void semant(env_t);
 
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
@@ -683,6 +737,8 @@ public:
    Expression copy_Expression();
    void dump(ostream& stream, int n);
 
+   void semant(env_t);
+
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
 #endif
@@ -702,6 +758,8 @@ public:
    }
    Expression copy_Expression();
    void dump(ostream& stream, int n);
+
+   void semant(env_t);
 
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
@@ -723,6 +781,8 @@ public:
    Expression copy_Expression();
    void dump(ostream& stream, int n);
 
+   void semant(env_t);
+
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
 #endif
@@ -742,6 +802,8 @@ public:
    }
    Expression copy_Expression();
    void dump(ostream& stream, int n);
+
+   void semant(env_t);
 
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
@@ -763,6 +825,8 @@ public:
    Expression copy_Expression();
    void dump(ostream& stream, int n);
 
+   void semant(env_t);
+
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
 #endif
@@ -780,6 +844,8 @@ public:
    }
    Expression copy_Expression();
    void dump(ostream& stream, int n);
+
+   void semant(env_t);
 
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
@@ -800,6 +866,8 @@ public:
    }
    Expression copy_Expression();
    void dump(ostream& stream, int n);
+
+   void semant(env_t);
 
 #ifdef Expression_SHARED_EXTRAS
    Expression_SHARED_EXTRAS
