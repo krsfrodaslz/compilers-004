@@ -274,13 +274,12 @@ void program_class::semant()
             ++nparent_undefined;
         }
     }
+    // TODO point out a class in any cycle
     if (nparent_undefined == errors.size()) {
         for (vector<pair<inheritance_tree::err_code, Class_> >::iterator it = errors.begin();
                 it != errors.end(); ++it) {
-            /* find a cycle */
             if (class_set.find(it->second->get_parent()) != class_set.end()) {
-                classtable->semant_error(it->second) << "inheritance graph is cyclic: class `"
-                    << it->second->get_name() << "'\n";
+                classtable->semant_error(it->second) << "inheritance graph is cyclic\n";
                 goto finish;
             }
         }

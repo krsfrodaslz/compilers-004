@@ -3,7 +3,10 @@ programming assignments of Standford compilers course
 The structure of the source code is rearranged which means you don't need the virtual machine any more. 
 Just install Flex, Bison and SPIM. Enjoy!
 
-UPDATE: csh is needed for grading
+UPDATE: Csh is needed for grading.
+
+Check my blog about this project if you're interested.
+http://blog.wisatbff.com/2016/02/04/compiler-004.html (Chinese)
 
 - [x] PA2
 - [x] PA3
