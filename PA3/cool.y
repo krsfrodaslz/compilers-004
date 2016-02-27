@@ -207,7 +207,6 @@ feature_list:
 
 feature:
   OBJECTID ':' TYPEID ';'       { /* one attr (default initialization) */
-    /* TODO It's illegal to have attributes named self. */
     @$ = @4;
     SET_NODELOC(@4);
     $$ = attr($1, $3, no_expr()); }
@@ -232,7 +231,6 @@ formal_list:
 
 formal:
   OBJECTID ':' TYPEID   {
-    /* TODO It's illegal to have formal parameters named 'self'. */
     @$ = @3;
     SET_NODELOC(@3);
     $$ = formal($1, $3); }
@@ -249,7 +247,6 @@ case_list:
 
 case:
   OBJECTID ':' TYPEID DARROW expr ';'   {
-    /* TODO It's illegal to bind 'self' in 'case'. */
     @$ = @6;
     SET_NODELOC(@6);
     $$ = branch($1, $3, $5); }
@@ -322,7 +319,6 @@ expr:
 | OBJECTID ASSIGN expr    { /* assignment */
     @$ = @3;
     SET_NODELOC(@3);
-    /* TODO It's illegal to assign to 'self'. */
     $$ = assign($1, $3); }
 | expr '@' TYPEID '.' OBJECTID '(' expr_list ')'    { /* static dispatch */
     @$ = @8;
@@ -401,7 +397,6 @@ expr:
     SET_NODELOC(@3);
     $$ = $2; }
 | LET let_expr  { /* let */
-    /* TODO It's illegal to bind 'self' in 'case'. */
     /* When parsing a 'let' expr with multiple identifiers,
        it should be transformed into nested 'let's. */
     @$ = @2;
