@@ -3,6 +3,10 @@
 #include "emit.h"
 #include "cool-tree.h"
 #include "symtab.h"
+#include <vector>
+#include <set>
+#include <utility>
+#include <algorithm>  // find_if
 
 enum Basicness     {Basic, NotBasic};
 #define TRUE 1
@@ -78,3 +82,25 @@ class BoolConst
   void code_ref(ostream&) const;
 };
 
+
+//
+//
+
+typedef std::pair<Symbol, Symbol> method_type;  // <method_name, class_name>
+
+class method_name_is {
+public:
+    method_name_is(Symbol name):_name(name)
+    {}
+
+    bool operator() (const method_type& m) {
+        return m.first == _name;
+    }
+
+private:
+    Symbol _name;
+};
+
+void emit_class_name(ostream& s, CgenNodeP node);
+void emit_class_obj_table(ostream& s, CgenNodeP node);
+void emit_dispatch_table(ostream& s, CgenNodeP node, const std::vector<method_type>& ims);

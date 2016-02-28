@@ -403,9 +403,8 @@ void StringEntry::code_def(ostream& s, int stringclasstag)
 
 
  /***** Add dispatch information for class String ******/
-
-      s << endl;                                              // dispatch table
-      s << WORD;  lensym->code_ref(s);  s << endl;            // string length
+  s << WORD << emit_disptable_ref(Str, s) << endl;            // dispatch table
+  s << WORD;  lensym->code_ref(s);  s << endl;                // string length
   emit_string_constant(s,str);                                // ascii string
   s << ALIGN;                                                 // align to word
 }
@@ -446,7 +445,7 @@ void IntEntry::code_def(ostream &s, int intclasstag)
 
  /***** Add dispatch information for class Int ******/
 
-      s << endl;                                          // dispatch table
+      s << WORD << emit_disptable_ref(Int, s) << endl;    // dispatch table
       s << WORD << str << endl;                           // integer value
 }
 
@@ -619,15 +618,28 @@ void CgenClassTable::code_constants()
 
 CgenClassTable::CgenClassTable(Classes classes, ostream& s) : nds(NULL) , str(s)
 {
-   stringclasstag = 0 /* Change to your String class tag here */;
-   intclasstag =    0 /* Change to your Int class tag here */;
-   boolclasstag =   0 /* Change to your Bool class tag here */;
+   stringclasstag = 3 /* Change to your String class tag here */;
+   intclasstag =    1 /* Change to your Int class tag here */;
+   boolclasstag =   2 /* Change to your Bool class tag here */;
 
    enterscope();
    if (cgen_debug) cout << "Building CgenClassTable" << endl;
    install_basic_classes();
    install_classes(classes);
    build_inheritance_tree();
+
+   int count = 0;
+   for(List<CgenNode> *l = nds; l; l = l->tl()) {
+       CgenNodeP node = l->hd();
+       if (node->get_name() == Str) {
+           stringclasstag = count;
+       } else if (node->get_name() == Int) {
+           intclasstag = count;
+       } else if (node->get_name() == Bool) {
+           boolclasstag = count;
+       }
+       ++count;
+   }
 
    code();
    exitscope();
@@ -834,6 +846,24 @@ void CgenClassTable::code()
 //                   - dispatch tables
 //
 
+  // TODO
+  // walk through the inheritance graph and emit prototype objects etc.
+  
+  // class names
+  str <<  CLASSNAMETAB << LABEL;
+  emit_class_names(str, probe(Object));
+
+  // class objects table
+  str << CLASSOBJTAB << LABEL;
+  emit_class_objects_table(str, probe(Object));
+
+  // dispatch table
+  std::vector<method_type> empty;
+  emit_dispatch_table(str, probe(Object), empty);
+
+  // prototype objects
+  emit_prototype_objects(str, probe(Object));
+
   if (cgen_debug) cout << "coding global text" << endl;
   code_global_text();
 
@@ -842,6 +872,10 @@ void CgenClassTable::code()
 //                   - the class methods
 //                   - etc...
 
+  // TODO
+  // default initializers for classes (Int, Bool, String and others)
+  //
+  // recursively emit code for class methods
 }
 
 
@@ -959,3 +993,99 @@ void object_class::code(ostream &s) {
 }
 
 
+
+// 
+//
+
+void emit_class_names(ostream& s, CgenNodeP node) {
+    s << WORD;
+    stringtable.lookup_string(node->get_name()->get_string())->code_ref(s);
+    s << endl;
+
+    for (List<CgenNode>* c = node->get_children(); c; c = c->tl()) {
+        emit_class_names(s, c->hd());
+    }
+}
+
+void emit_class_objects_table(ostream& s, CgenNodeP node) {
+    s << WORD;
+    emit_protobj_ref(node->get_name(), s);
+    s << endl;
+
+    s << WORD;
+    emit_init_ref(node->get_name(), s);
+    s << endl;
+
+    for (List<CgenNode>* c = node->get_children(); c; c = c->tl()) {
+        emit_class_objects_table(s, c->hd());
+    }
+}
+
+/* To keep method order consistent, we iterate inherited methods reversely
+ * and insert an inherited method to the front of method vector of current
+ * class if no overriding version is found. Otherwise, we replace it with
+ * the overriding version.
+ */
+void emit_dispatch_table(ostream& s, CgenNodeP node, const std::vector<method_type>& ims) {
+    s << node->get_name() << DISPTAB_SUFFIX << LABEL;
+
+    std::vector<method_type> pms;  // non-inherited methods
+    Features features = node->get_features();
+    for (int i = features->first(); features->more(i); i = features->next(i)) {
+        if (features->nth(i)->is_method()) {
+            pms.push_back(std::make_pair(features->nth(i)->get_name(),
+                        node->get_name()));
+        }
+    }
+    CgenNodeP parent = node->get_parentnd();
+    for (std::vector<method_type>::const_reverse_iterator rit = ims.rbegin(); 
+            rit != ims.rend(); ++rit) {
+        std::vector<method_type>::iterator pos = 
+            std::find_if(pms.begin(), pms.end(), method_name_is(rit->first));
+        if (pos != pms.end()) {   // overriding version
+            pms.erase(pos);
+            pms.insert(pms.begin(), std::make_pair(rit->first, node->get_name()));
+        } else {
+            pms.insert(pms.begin(), *rit);
+        }
+    }
+    for (std::vector<method_type>::iterator it = pms.begin(); it != pms.end(); ++it) {
+        s << WORD;
+        emit_method_ref(it->second, it->first, s);
+        s << endl;
+    }
+    for (List<CgenNode>* c = node->get_children(); c; c = c->tl()) {
+        emit_dispatch_table(s, c->hd(), pms);
+    }
+
+}
+
+void emit_prototype_objects(ostream& s, List<CgenNode>* nds) {
+
+    int count = list_length(nds) - 1;
+
+    for(List<CgenNode> *l = nds; l; l = l->tl()) {
+        CgenNodeP node = l->hd();
+
+        s << WORD << -1 << endl;
+        emit_protobj_ref(node->get_name(), s);
+        s << LABEL;
+        
+        s << WORD << count-- << endl;
+
+        Features features = node->get_features();
+        int size = 3;
+        for (int i = features->first(); features->more(i); i = features->next(i)) {
+            if (!features->nth(i)->is_method()) {
+                ++size;
+            }
+        }
+        s << WORD << size << endl;
+        s << emit_disptable_ref(node->get_name(), s) << endl;
+        for (int i = features->first(); features->more(i); i = features->next(i)) {
+            if (!features->nth(i)->is_method()) {
+                ++size;
+            }
+        }
+    }
+}
