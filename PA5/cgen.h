@@ -4,8 +4,8 @@
 #include "cool-tree.h"
 #include "symtab.h"
 #include <vector>
-#include <set>
-#include <utility>
+#include <string>
+#include <utility>  // pair
 #include <algorithm>  // find_if
 
 enum Basicness     {Basic, NotBasic};
@@ -59,6 +59,7 @@ private:
    List<CgenNode> *children;                  // Children of class
    Basicness basic_status;                    // `Basic' if class is basic
                                               // `NotBasic' otherwise
+   int class_tag;
 
 public:
    CgenNode(Class_ c,
@@ -70,6 +71,8 @@ public:
    void set_parentnd(CgenNodeP p);
    CgenNodeP get_parentnd() { return parentnd; }
    int basic() { return (basic_status == Basic); }
+   void set_class_tag(int tag) { class_tag = tag; }
+   int get_class_tag() { return class_tag; }
 };
 
 class BoolConst 
@@ -86,14 +89,14 @@ class BoolConst
 //
 //
 
-typedef std::pair<Symbol, Symbol> method_type;  // <method_name, class_name>
+typedef std::pair<Symbol, Symbol> symbol_pair;
 
 class method_name_is {
 public:
     method_name_is(Symbol name):_name(name)
     {}
 
-    bool operator() (const method_type& m) {
+    bool operator() (const symbol_pair& m) {
         return m.first == _name;
     }
 
@@ -101,6 +104,9 @@ private:
     Symbol _name;
 };
 
-void emit_class_name(ostream& s, CgenNodeP node);
-void emit_class_obj_table(ostream& s, CgenNodeP node);
-void emit_dispatch_table(ostream& s, CgenNodeP node, const std::vector<method_type>& ims);
+void emit_class_names(ostream& s, CgenNodeP node);
+void emit_class_object_table(ostream& s, CgenNodeP node);
+// <method_name, class_name>
+void emit_dispatch_table(ostream& s, CgenNodeP node, const std::vector<symbol_pair>& ims);
+void emit_prototype_objects(ostream& s, CgenNodeP node, const std::vector<Feature>& ias);
+void emit_attributes(ostream& s, const std::vector<Feature>& attrs);

@@ -195,6 +195,8 @@ public:
    void dump(ostream& stream, int n);
 
    bool is_method() { return true; }
+   Formals get_formals() { return formals; }
+   Expression get_expr() { return expr; }
 
 #ifdef Feature_SHARED_EXTRAS
    Feature_SHARED_EXTRAS
@@ -221,6 +223,8 @@ public:
    void dump(ostream& stream, int n);
 
    bool is_method() { return false; }
+   Symbol get_type() { return type_decl; }
+   Expression get_init() { return init; }
 
 #ifdef Feature_SHARED_EXTRAS
    Feature_SHARED_EXTRAS
