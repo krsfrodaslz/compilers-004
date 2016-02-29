@@ -841,6 +841,7 @@ void CgenClassTable::code()
 //
 
   // walk through the inheritance graph and emit prototype objects etc.
+  env_type e;
   
   // class names
   str <<  CLASSNAMETAB << LABEL;
@@ -851,10 +852,12 @@ void CgenClassTable::code()
   emit_class_object_table(str, probe(Object));
 
   // dispatch table
-  emit_dispatch_table(str, probe(Object), std::vector<symbol_pair>());
+  e.curr_class = probe(Object);
+  emit_dispatch_table(str, e, std::vector<symbol_pair>());
 
   // prototype objects
-  emit_prototype_objects(str, probe(Object), std::vector<Feature>());
+  e.curr_class = probe(Object);
+  emit_prototype_objects(str, e, std::vector<Feature>());
 
   if (cgen_debug) cout << "coding global text" << endl;
   code_global_text();
@@ -864,14 +867,13 @@ void CgenClassTable::code()
 //                   - the class methods
 //                   - etc...
 
-  // TODO
-  // default initializers for classes (Int, Bool, String and others)
-  //
-  // recursively emit code for class methods
+  // TODO integrate initializer emission with method emission
+  
+  // default initializers
+  emit_object_initializers(str, e);
 
-  emit_object_initializers(str, probe(Object));
-
-  emit_class_methods(str, probe(Object));
+  // class methods
+  emit_class_methods(str, e);
 }
 
 
@@ -907,58 +909,58 @@ CgenNode::CgenNode(Class_ nd, Basicness bstatus, CgenClassTableP ct) :
 //
 //*****************************************************************
 
-void assign_class::code(ostream &s) {
+void assign_class::code(ostream& s, env_type& e) {
 }
 
-void static_dispatch_class::code(ostream &s) {
+void static_dispatch_class::code(ostream& s, env_type& e) {
 }
 
-void dispatch_class::code(ostream &s) {
+void dispatch_class::code(ostream& s, env_type& e) {
 }
 
-void cond_class::code(ostream &s) {
+void cond_class::code(ostream& s, env_type& e) {
 }
 
-void loop_class::code(ostream &s) {
+void loop_class::code(ostream& s, env_type& e) {
 }
 
-void typcase_class::code(ostream &s) {
+void typcase_class::code(ostream& s, env_type& e) {
 }
 
-void block_class::code(ostream &s) {
+void block_class::code(ostream& s, env_type& e) {
 }
 
-void let_class::code(ostream &s) {
+void let_class::code(ostream& s, env_type& e) {
 }
 
-void plus_class::code(ostream &s) {
+void plus_class::code(ostream& s, env_type& e) {
 }
 
-void sub_class::code(ostream &s) {
+void sub_class::code(ostream& s, env_type& e) {
 }
 
-void mul_class::code(ostream &s) {
+void mul_class::code(ostream& s, env_type& e) {
 }
 
-void divide_class::code(ostream &s) {
+void divide_class::code(ostream& s, env_type& e) {
 }
 
-void neg_class::code(ostream &s) {
+void neg_class::code(ostream& s, env_type& e) {
 }
 
-void lt_class::code(ostream &s) {
+void lt_class::code(ostream& s, env_type& e) {
 }
 
-void eq_class::code(ostream &s) {
+void eq_class::code(ostream& s, env_type& e) {
 }
 
-void leq_class::code(ostream &s) {
+void leq_class::code(ostream& s, env_type& e) {
 }
 
-void comp_class::code(ostream &s) {
+void comp_class::code(ostream& s, env_type& e) {
 }
 
-void int_const_class::code(ostream& s)  
+void int_const_class::code(ostream& s, env_type& e)
 {
   //
   // Need to be sure we have an IntEntry *, not an arbitrary Symbol
@@ -966,17 +968,17 @@ void int_const_class::code(ostream& s)
   emit_load_int(ACC,inttable.lookup_string(token->get_string()),s);
 }
 
-void string_const_class::code(ostream& s)
+void string_const_class::code(ostream& s, env_type& e)
 {
   emit_load_string(ACC,stringtable.lookup_string(token->get_string()),s);
 }
 
-void bool_const_class::code(ostream& s)
+void bool_const_class::code(ostream& s, env_type& e)
 {
   emit_load_bool(ACC, BoolConst(val), s);
 }
 
-void new__class::code(ostream &s) {
+void new__class::code(ostream& s, env_type& e) {
     emit_partial_load_address(ACC, s);
     emit_protobj_ref(type_name, s);
     s << endl;
@@ -987,13 +989,13 @@ void new__class::code(ostream &s) {
     emit_init_ref(type_name, s);
 }
 
-void isvoid_class::code(ostream &s) {
+void isvoid_class::code(ostream& s, env_type& e) {
 }
 
-void no_expr_class::code(ostream &s) {
+void no_expr_class::code(ostream& s, env_type& e) {
 }
 
-void object_class::code(ostream &s) {
+void object_class::code(ostream& s, env_type& e) {
 }
 
 
@@ -1030,25 +1032,27 @@ void emit_class_object_table(ostream& s, CgenNodeP node) {
  * class if no overriding version is found. Otherwise, we replace it with
  * the overriding version.
  */
-void emit_dispatch_table(ostream& s, CgenNodeP node, const std::vector<symbol_pair>& ims) {
-    s << node->get_name() << DISPTAB_SUFFIX << LABEL;
+void emit_dispatch_table(ostream& s, env_type& e, const std::vector<symbol_pair>& ims) {
+    s << e.curr_class->get_name() << DISPTAB_SUFFIX << LABEL;
 
     std::vector<symbol_pair> pms;  // non-inherited methods
-    Features features = node->get_features();
+
+    // TODO construct formal order container recursively
+    
+    Features features = e.curr_class->get_features();
     for (int i = features->first(); features->more(i); i = features->next(i)) {
         if (features->nth(i)->is_method()) {
             pms.push_back(std::make_pair(features->nth(i)->get_name(),
-                        node->get_name()));
+                        e.curr_class->get_name()));
         }
     }
-    CgenNodeP parent = node->get_parentnd();
     for (std::vector<symbol_pair>::const_reverse_iterator rit = ims.rbegin(); 
             rit != ims.rend(); ++rit) {
         std::vector<symbol_pair>::iterator pos = 
             std::find_if(pms.begin(), pms.end(), method_name_is(rit->first));
         if (pos != pms.end()) {   // overriding version
             pms.erase(pos);
-            pms.insert(pms.begin(), std::make_pair(rit->first, node->get_name()));
+            pms.insert(pms.begin(), std::make_pair(rit->first, e.curr_class->get_name()));
         } else {
             pms.insert(pms.begin(), *rit);
         }
@@ -1058,22 +1062,25 @@ void emit_dispatch_table(ostream& s, CgenNodeP node, const std::vector<symbol_pa
         emit_method_ref(it->second, it->first, s);
         s << endl;
     }
-    for (List<CgenNode>* c = node->get_children(); c; c = c->tl()) {
-        emit_dispatch_table(s, c->hd(), pms);
+    for (List<CgenNode>* c = e.curr_class->get_children(); c; c = c->tl()) {
+        CgenNodeP curr_class_save = e.curr_class;
+        e.curr_class = c->hd();
+        emit_dispatch_table(s, e, pms);
+        e.curr_class = curr_class_save;
     }
 
 }
 
-void emit_prototype_objects(ostream& s, CgenNodeP node, const std::vector<Feature>& ias) {
+void emit_prototype_objects(ostream& s, env_type& e, const std::vector<Feature>& ias) {
 
     s << WORD << -1 << endl;    // eye catcher
 
-    emit_protobj_ref(node->get_name(), s);  // label
+    emit_protobj_ref(e.curr_class->get_name(), s);  // label
     s << LABEL;
     
-    s << WORD << node->get_class_tag() << endl;     // class tag
+    s << WORD << e.curr_class->get_class_tag() << endl;     // class tag
 
-    Features features = node->get_features();
+    Features features = e.curr_class->get_features();
     std::vector<Feature> pas(ias);
     for (int i = features->first(); features->more(i); i = features->next(i)) {
         if (!features->nth(i)->is_method()) {
@@ -1083,18 +1090,15 @@ void emit_prototype_objects(ostream& s, CgenNodeP node, const std::vector<Featur
     s << WORD << DEFAULT_OBJFIELDS + pas.size() << endl;  // object size
 
     s << WORD;
-    emit_disptable_ref(node->get_name(), s);    // dispatch table pointer
+    emit_disptable_ref(e.curr_class->get_name(), s);    // dispatch table pointer
     s << endl;
 
-    emit_attributes(s, pas);   // attributs
+    // attributs
+    int offset = DEFAULT_OBJFIELDS;
 
-    for (List<CgenNode>* c = node->get_children(); c; c = c->tl()) {
-        emit_prototype_objects(s, c->hd(), pas);
-    }
-}
+    // TODO construct offset container
 
-void emit_attributes(ostream& s, const std::vector<Feature>& attrs) {
-    for (std::vector<Feature>::const_iterator it = attrs.begin(); it != attrs.end(); ++it) {
+    for (std::vector<Feature>::const_iterator it = pas.begin(); it != pas.end(); ++it) {
         s << WORD;
         attr_class* attr = dynamic_cast<attr_class*>(*it);
         if (attr->get_type() == Int) {
@@ -1107,32 +1111,61 @@ void emit_attributes(ostream& s, const std::vector<Feature>& attrs) {
             s << 0; // void
         }
         s << endl;
+
+        // record offsets for later use
+        offsets.insert(attr->get_name(), WORD_SIZE*offset++);
+    }
+
+
+    for (List<CgenNode>* c = e.curr_class->get_children(); c; c = c->tl()) {
+        CgenNodeP curr_class_save = e.curr_class;
+        e.curr_class = c->hd();
+        emit_prototype_objects(s, e, pas);
+        e.curr_class = curr_class_save;
     }
 }
 
 /*
- * Each initializer takes exactly one argument (self) which is stored
+ * Each initializer takes exactly one argument (self) which is passed
  * in $a0.
  *
- * stack frame:
- *   $fp: points to the start of the current precedure's stack frame
- *   $s0: self pointer
- *   $ra: address of the next instruction after where the current precedure
- *        is invoked
+ * illustrasion of a precedure's stack frame:
+ *              | ...
+ *              |                       <-- move $sp here before return
+ *              | argument n
+ *              | argument n-1
+ *              | ...
+ *              | argument 1
+ *   new $fp -> | saved caller's $fp    <-- $sp just before enter this callee
+ *              | saved $s0 ($a0/argument 0/self)
+ *              | saved $ra
+ *       $sp -> |
+ *              | ...
+ *
+ *
+ *  Where the new $fp should locate is not fixed and is totally up to the designer.
  */
-void emit_object_initializers(ostream& s, CgenNodeP node) {
-    emit_init_ref(node->get_name(), s);
+void emit_object_initializers(ostream& s, env_type& e) {
+    emit_init_ref(e.curr_class->get_name(), s);
     s << LABEL;
 
+    //
+    // Things callers and callees should do to make consistency during
+    // precudure calls.
+    // Notice that the descriptions below is copied from SPIM's manual
+    // thus may not be the same as our design!
+    //
     // callee
     // 1. allocate memory for the frame
     // 2. save callee-saved registers in the frame ($s0-$s7, $fp, $ra).
     //    $ra only needs to be saved if the callee itself makes a call
-    // 3. $fp = $sp + sizeof(frame) - 4 ??? // FIXME
+    // 3. set $fp
+    //    
+    //    // function body of callee
     //
     // 4. save return value (into $a0 here)
     // 5. resotre callee-saved registers
-    // 6. pop the stack frame ($sp = $sp - sizeof(frame))
+    // 6. pop the stack frame
     // 7. jump to $ra
     //
     //
@@ -1141,80 +1174,87 @@ void emit_object_initializers(ostream& s, CgenNodeP node) {
     // 2. save caller-saved registers if needed ($a0-$a3, $t0-$t9)
     // 3. execute jal
     
-    emit_callee_set_up_code(s);
+    emit_precedure_set_up_code(s);
     emit_move(SELF, ACC, s);
 
-    CgenNodeP parent = node->get_parentnd();
+    CgenNodeP parent = e.curr_class->get_parentnd();
     if (parent) {
         s << JAL;
         emit_init_ref(parent->get_name(), s);
         s << endl;
     }
 
-    Features features = node->get_features();
+    Features features = e.curr_class->get_features();
     for (int i = features->first(); features->more(i); i = features->next(i)) {
         Feature ft = features->nth(i);
         if (ft->is_method()) {
             continue;
         }
-        dynamic_cast<attr_class*>(ft)->get_init()->code(s);
+        ft->code(s, e);
     }
 
     emit_move(ACC, SELF, s);
-    emit_callee_clean_up_code(s);
+    emit_precedure_clean_up_code(s);
 }
 
-void emit_class_methods(ostream& s, CgenNodeP node) {
-    Features features = node->get_features();
+void attr_class::code(ostream& s, env_type& e) {
+    if (init->get_name() == No_type) {
+        return;
+    }
+
+    // FIXME
+    init->code(s);
+    // save the address of the newly allocated object to the 
+    // corresponding location of the object
+    //
+    // return value saved in $a0 if init is not no_expr
+    emit_store(ACC, e.offset(name), SELF, s);
+}
+
+void method_class::code(ostream& s, env_type& e) {
+    int narg = dynamic_cast<method_class*>(ft)->get_formals()->len();
+    emit_precedure_set_up_code(s);
+    emit_move(SELF, ACC, s);
+    
+    // FIXME
+    expr->code(s);
+
+    emit_precedure_clean_up_code(s, narg);
+}
+
+void emit_class_methods(ostream& s, env_type& e) {
+    Features features = e.curr_class->get_features();
     for (int i = features->first(); features->more(i), i = features->next(i)) {
         Feature ft = features->nth(i);
         if (!ft->is_method()) {
             continue;
         }
-
-        emit_method_ref(node->get_name(), ft->get_name());
+        emit_method_ref(e->curr_class->get_name(), ft->get_name());
         s << LABEL;
-
-        int narg = dynamic_cast<method_class*>(ft)->get_formals()->len();
-        emit_callee_set_up_code(s, true);
-        emit_move(SELF, ACC, s);
-        
-        // TODO
-        dynamic_cast<method_class*>(ft)->get_expr()->code(s);
-
-        emit_callee_clean_up_code(s, true, narg);
-
+        ft->code(s, e);
     }
 
-    for (List<CgenNode>* c = node->get_children; c; c = c->tl()) {
+    for (List<CgenNode>* c = e->curr_class->get_children(); c; c = c->tl()) {
         emit_class_methods(s, c);
     }
 }
 
-void emit_callee_set_up_code(ostream& s) {
-    emit_callee_set_up_code(s, false);
+void emit_precedure_set_up_code(ostream& s) {
+    emit_addiu(SP, SP, -WORD_SIZE*3, s);
+    emit_store(FP, 3, SP, s);
+    emit_store(SELF, 2, SP, s);
+    emit_store(RA, 1, SP, s);
+    emit_addiu(FP, SP, WORD_SIZE*3 ,s);
 }
 
-void emit_callee_set_up_code(ostream& s, bool has_return) {
-    emit_addiu(SP, SP, -WORD_SIZE*(3+has_return), s);
-    emit_store(FP, 3+has_return, SP, s);
-    emit_store(SELF, 2+has_return, SP, s);
-    emit_store(RA, 1+has_return, SP, s);
-    emit_addiu(FP, SP, 4 ,s);
+void emit_precedure_clean_up_code(ostream& s) {
+    emit_precedure_clean_up_code(s, 0);
 }
 
-void emit_callee_clean_up_code(ostream& s) {
-    emit_callee_clean_up_code(s, false, 0);
-}
-
-void emit_callee_clean_up_code(ostream& s, bool has_return) {
-    emit_callee_clean_up_code(s, has_return, 0);
-}
-
-void emit_callee_clean_up_code(ostream& s, bool has_return, int narg) {
-    emit_load(FP, 3+has_return, SP, s);
-    emit_load(SELF, 2+has_return, SP, s);
-    emit_load(RA, 1+has_return, SP, s);
-    emit_addiu(SP, SP, WORD_SIZE*(3+has_return+narg), s);
+void emit_precedure_clean_up_code(ostream& s, int narg) {
+    emit_load(FP, 3, SP, s);
+    emit_load(SELF, 2, SP, s);
+    emit_load(RA, 1, SP, s);
+    emit_addiu(SP, SP, WORD_SIZE*(3+narg), s);
     emit_return(s);
 }
