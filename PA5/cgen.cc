@@ -909,6 +909,13 @@ CgenNode::CgenNode(Class_ nd, Basicness bstatus, CgenClassTableP ct) :
 //*****************************************************************
 
 void assign_class::code(ostream& s, env_type& e) {
+    expr->code(s, e);
+    int ret;
+    if ( (ret= e.lookup_object(name)) > 0) {
+        emit_store(ACC, ret, SELF, s);
+    } else {
+        emit_store(ACC, -ret*WORD_SIZE, FP, s);
+    }
 }
 
 void static_dispatch_class::code(ostream& s, env_type& e) {
@@ -1060,10 +1067,10 @@ void emit_dispatch_table(ostream& s, env_type& e, const std::vector<method_class
         s << endl;
 
         // avoid duplicate record FIXME
-        if (it->second == e->curr_class->get_name()) {
+        if (it->second == e.curr_class->get_name()) {
             Formals formals = it->first->get_formals();
             for (int j = formals->first(); formals->more(j); j = formals->next(j)) {
-                e.set_order(it->first->get_name(), formals->nth(j)->get_name(), j);
+                e.set_order(it->first->get_name(), formals->nth(j)->get_name(), j+1);
             }
         }
     }
@@ -1197,6 +1204,13 @@ void emit_object_initializers(ostream& s, env_type& e) {
 
     emit_move(ACC, SELF, s);
     emit_precedure_clean_up_code(s);
+
+    for (List<CgenNode>* c = e.curr_class->get_children(); c; c = c->tl()) {
+        CgenNodeP curr_class_save = e.curr_class;
+        e.curr_class = c->hd();
+        emit_object_initializers(s, e);
+        e.curr_class = curr_class_save;
+    }
 }
 
 void attr_class::code(ostream& s, env_type& e) {
@@ -1231,13 +1245,16 @@ void emit_class_methods(ostream& s, env_type& e) {
         if (!ft->is_method()) {
             continue;
         }
-        emit_method_ref(e->curr_class->get_name(), ft->get_name());
+        emit_method_ref(e.curr_class->get_name(), ft->get_name());
         s << LABEL;
         ft->code(s, e);
     }
 
-    for (List<CgenNode>* c = e->curr_class->get_children(); c; c = c->tl()) {
-        emit_class_methods(s, c);
+    for (List<CgenNode>* c = e.curr_class->get_children(); c; c = c->tl()) {
+        CgenNodeP curr_class_save = e.curr_class;
+        e.curr_class = c->hd();
+        emit_class_methods(s, e);
+        e.curr_class = curr_class_save;
     }
 }
 

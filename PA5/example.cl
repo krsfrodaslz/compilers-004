@@ -6,7 +6,7 @@
 class A {
 i:IO <- new IO;
 foo(a:Int):Int {
-a+2
+a<-2
 };
 };
 

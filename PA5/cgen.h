@@ -113,6 +113,7 @@ public:
     env_type():curr_class(0), curr_method(0)
     {}
 
+    // 12, 16, 20, ...
     int offset(Symbol attr) {
         return offset(curr_class->get_name(), attr);
     }
@@ -122,6 +123,7 @@ public:
         return offset_container[type][attr];
     }
 
+    // 1, 2, 3, ...
     int order(Symbol formal) {
         return order(curr_class->get_name(), curr_method->get_name(), formal);
     }
@@ -156,6 +158,21 @@ public:
     void set_order(Symbol type, Symbol method, Symbol formal, int n) {
         assert(type && method && formal);
         foc[type][method][formal] = n;
+    }
+
+    // lookup an object in current class's context
+    // If it's an attribute, return its offset.
+    // Else it's an formal, return its order * -1.
+    // FIXME
+    int lookup_object(Symbol o) {
+        assert(curr_class);
+        if (oc[curr_class].count(o)) {
+            return oc[curr_class->get_name()][o];
+        } else {
+            // FIXME
+            assert(curr_method);
+            return -foc[curr_class->get_name()][curr_method->get_name()][o];
+        }
     }
 
     offset_container oc;
