@@ -90,15 +90,15 @@ class BoolConst
 //
 //
 
-typedef std::pair<Symbol, Symbol> symbol_pair;
+typedef std::pair<Feature, Symbol> method_classname_pair;
 
 class method_name_is {
 public:
     method_name_is(Symbol name):_name(name)
     {}
 
-    bool operator() (const symbol_pair& m) {
-        return m.first == _name;
+    bool operator() (const method_classname_pair& m) {
+        return m.first->get_name() == _name;
     }
 
 private:
@@ -113,26 +113,49 @@ public:
     env_type():curr_class(0), curr_method(0)
     {}
 
-    // get the offset of attribute `attr' of objects of current class
     int offset(Symbol attr) {
-        return offset_container[curr_class->get_name()][attr];
+        return offset(curr_class->get_name(), attr);
     }
 
-    // get the offset of attribute `attr' of objects of type `type'
     int offset(Symbol type, Symbol attr) {
+        assert(type && attr);
         return offset_container[type][attr];
     }
 
     int order(Symbol formal) {
-        return formal_order_container[curr_class->get_name()][curr_method->get_name()][formal];
+        return order(curr_class->get_name(), curr_method->get_name(), formal);
     }
 
     int order(Symbol method, Symbol formal) {
-        return formal_order_container[curr_class->get_name()][method][formal];
+        return order(curr_class->get_name(), method, formal);
     }
 
     int order(Symbol type, Symbol method, Symbol formal) {
+        assert(type && method && formal);
         return formal_order_container[type][method][formal];
+    }
+
+    
+    void set_offset(Symbol attr, int n) {
+        set_offset(curr_class->get_name(), attr, n);
+    }
+
+    void set_offset(Symbol type, Symbol attr, int n) {
+        assert(type && attr);
+        oc[type][attr] = n;
+    }
+
+    void set_order(Symbol formal, int n) {
+        set_order(curr_class->get_name(), curr_method->get_name(), formal, n);
+    }
+
+    void set_order(Symbol method, Symbol formal, int n) {
+        set_order(curr_class->get_name(), method, formal, n);
+    }
+
+    void set_order(Symbol type, Symbol method, Symbol formal, int n) {
+        assert(type && method && formal);
+        foc[type][method][formal] = n;
     }
 
     offset_container oc;
@@ -143,8 +166,7 @@ public:
 
 void emit_class_names(ostream& s, CgenNodeP node);
 void emit_class_object_table(ostream& s, CgenNodeP node);
-// <method_name, class_name>
-void emit_dispatch_table(ostream& s, env_type& e, const std::vector<symbol_pair>& ims);
+void emit_dispatch_table(ostream& s, env_type& e, const std::vector<method_classname_pair>& ims);
 void emit_prototype_objects(ostream& s, env_type& e, const std::vector<Feature>& ias);
 void emit_class_methods(ostream& s, env_type& e);
 

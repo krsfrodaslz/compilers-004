@@ -853,10 +853,9 @@ void CgenClassTable::code()
 
   // dispatch table
   e.curr_class = probe(Object);
-  emit_dispatch_table(str, e, std::vector<symbol_pair>());
+  emit_dispatch_table(str, e, std::vector<method_classname_pair>());
 
   // prototype objects
-  e.curr_class = probe(Object);
   emit_prototype_objects(str, e, std::vector<Feature>());
 
   if (cgen_debug) cout << "coding global text" << endl;
@@ -1032,24 +1031,22 @@ void emit_class_object_table(ostream& s, CgenNodeP node) {
  * class if no overriding version is found. Otherwise, we replace it with
  * the overriding version.
  */
-void emit_dispatch_table(ostream& s, env_type& e, const std::vector<symbol_pair>& ims) {
+void emit_dispatch_table(ostream& s, env_type& e, const std::vector<method_classname_pair>& ims) {
     s << e.curr_class->get_name() << DISPTAB_SUFFIX << LABEL;
 
-    std::vector<symbol_pair> pms;  // non-inherited methods
+    std::vector<method_classname_pair> pms;  // non-inherited methods
 
-    // TODO construct formal order container recursively
-    
     Features features = e.curr_class->get_features();
     for (int i = features->first(); features->more(i); i = features->next(i)) {
-        if (features->nth(i)->is_method()) {
-            pms.push_back(std::make_pair(features->nth(i)->get_name(),
-                        e.curr_class->get_name()));
+        Feature ft = features->nth(i);
+        if (ft->is_method()) {
+            pms.push_back(std::make_pair(ft, e.curr_class->get_name()));
         }
     }
-    for (std::vector<symbol_pair>::const_reverse_iterator rit = ims.rbegin(); 
+    for (std::vector<method_classname_pair>::const_reverse_iterator rit = ims.rbegin(); 
             rit != ims.rend(); ++rit) {
-        std::vector<symbol_pair>::iterator pos = 
-            std::find_if(pms.begin(), pms.end(), method_name_is(rit->first));
+        std::vector<method_classname_pair>::iterator pos = 
+            std::find_if(pms.begin(), pms.end(), method_name_is(rit->first->get_name()));
         if (pos != pms.end()) {   // overriding version
             pms.erase(pos);
             pms.insert(pms.begin(), std::make_pair(rit->first, e.curr_class->get_name()));
@@ -1057,10 +1054,18 @@ void emit_dispatch_table(ostream& s, env_type& e, const std::vector<symbol_pair>
             pms.insert(pms.begin(), *rit);
         }
     }
-    for (std::vector<symbol_pair>::iterator it = pms.begin(); it != pms.end(); ++it) {
+    for (std::vector<method_classname_pair>::iterator it = pms.begin(); it != pms.end(); ++it) {
         s << WORD;
-        emit_method_ref(it->second, it->first, s);
+        emit_method_ref(it->second, it->first->get_name(), s);
         s << endl;
+
+        // avoid duplicate record FIXME
+        if (it->second == e->curr_class->get_name()) {
+            Formals formals = it->first->get_formals();
+            for (int j = formals->first(); formals->more(j); j = formals->next(j)) {
+                e.set_order(it->first->get_name(), formals->nth(j)->get_name(), j);
+            }
+        }
     }
     for (List<CgenNode>* c = e.curr_class->get_children(); c; c = c->tl()) {
         CgenNodeP curr_class_save = e.curr_class;
@@ -1096,8 +1101,6 @@ void emit_prototype_objects(ostream& s, env_type& e, const std::vector<Feature>&
     // attributs
     int offset = DEFAULT_OBJFIELDS;
 
-    // TODO construct offset container
-
     for (std::vector<Feature>::const_iterator it = pas.begin(); it != pas.end(); ++it) {
         s << WORD;
         attr_class* attr = dynamic_cast<attr_class*>(*it);
@@ -1112,10 +1115,9 @@ void emit_prototype_objects(ostream& s, env_type& e, const std::vector<Feature>&
         }
         s << endl;
 
-        // record offsets for later use
-        offsets.insert(attr->get_name(), WORD_SIZE*offset++);
+        // construct offset container
+        e.set_offset(attr->get_name(), WORD_SIZE*offset++);
     }
-
 
     for (List<CgenNode>* c = e.curr_class->get_children(); c; c = c->tl()) {
         CgenNodeP curr_class_save = e.curr_class;
