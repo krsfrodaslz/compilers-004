@@ -4,6 +4,7 @@
 #include "cool-tree.h"
 #include "symtab.h"
 #include <vector>
+#include <map>
 #include <string>
 #include <utility>  // pair
 #include <algorithm>  // find_if
@@ -73,7 +74,6 @@ public:
    int basic() { return (basic_status == Basic); }
    void set_class_tag(int tag) { class_tag = tag; }
    int get_class_tag() { return class_tag; }
-   const std::map<Symbol, int>& get_offsets() { return offsets; }
 };
 
 class BoolConst 
@@ -107,78 +107,108 @@ private:
 
 class env_type {
 public:
-    typedef std::map<Symbol, std::map<Symbol, int> > offset_container;
-    typedef std::map<Symbol, std::map<Symbol, std::map<Symbol, int> > > formal_order_container;
+    // type, attr, offset
+    typedef std::map<Symbol, std::map<Symbol, int> > attr_offset_container;
+    // type, method, formal, offset
+    typedef std::map<Symbol, std::map<Symbol, std::map<Symbol, int> > > formal_offset_container;
+    // type, method, max_let_and_case_nested_depth
+    typedef std::map<Symbol, std::map<Symbol, int> > method_depth_container;
+    // type, attribute, max_let_and_case_nested_depth
+    typedef std::map<Symbol, std::map<Symbol, int> > attr_depth_container;
+    // local variable (let or case), offset (dynamic)
+    typedef std::vector<std::pair<Symbol, int> > local_offset_container;
 
-    env_type():curr_class(0), curr_method(0)
+    enum id_type {
+        ATTRIBUTE,
+        FORMAL,
+        LOCAL,
+        SELFOBJ
+    };
+
+    env_type():
+        classtable(0),
+        curr_class(0),
+        curr_method(0),
+        blc(0),
+        curr_depth(0),
+        curr_loc(0)
     {}
 
-    // 12, 16, 20, ...
-    int offset(Symbol attr) {
-        return offset(curr_class->get_name(), attr);
+    // 12, 16, 20, ... (relative to $s0)
+    int attr_offset(Symbol attr) {
+        assert(curr_class && attr);
+        return aoc[curr_class->get_name()][attr];
     }
 
-    int offset(Symbol type, Symbol attr) {
-        assert(type && attr);
-        return offset_container[type][attr];
+    // 4, 8, 12, ... (relative to $fp)
+    int formal_offset(Symbol formal) {
+        assert(curr_class && curr_method && formal);
+        return foc[curr_class->get_name()][curr_method->get_name()][formal];
     }
 
-    // 1, 2, 3, ...
-    int order(Symbol formal) {
-        return order(curr_class->get_name(), curr_method->get_name(), formal);
-    }
-
-    int order(Symbol method, Symbol formal) {
-        return order(curr_class->get_name(), method, formal);
-    }
-
-    int order(Symbol type, Symbol method, Symbol formal) {
-        assert(type && method && formal);
-        return formal_order_container[type][method][formal];
+    // -12, -16, -20, ... (relative to $fp)
+    int local_offset(Symbol local) {
+        assert(curr_class && curr_method && curr_loc && curr_depth && local);
+        // iterate reversely to find the first matched one
+        for (local_offset_container::const_reverse_iterater rit = curr_loc->rbegin();
+                rit != loc->rend(); ++rit) {
+            if (rit->first == local) {
+                return rit->second;
+            }
+        }
+        assert(0);
     }
 
     
-    void set_offset(Symbol attr, int n) {
-        set_offset(curr_class->get_name(), attr, n);
+    void set_attr_offset(Symbol attr, int n) {
+        assert(curr_class && attr);
+        aoc[curr_class->get_name()][attr] = n;
     }
 
-    void set_offset(Symbol type, Symbol attr, int n) {
-        assert(type && attr);
-        oc[type][attr] = n;
+    void set_formal_offset(Symbol formal, int n) {
+        assert(curr_class && curr_method && formal);
+        foc[curr_class->get_name()][curr_method->get_name()][formal] = n;
     }
 
-    void set_order(Symbol formal, int n) {
-        set_order(curr_class->get_name(), curr_method->get_name(), formal, n);
+    void set_local_offset(Symbol local) {
+        assert(curr_class && curr_method && curr_loc && curr_depth && local);
+        loc.push_back(std::make_pair(local, (FRAME_SIZE+curr_depth-1)*WORD_SIZE));
     }
 
-    void set_order(Symbol method, Symbol formal, int n) {
-        set_order(curr_class->get_name(), method, formal, n);
-    }
-
-    void set_order(Symbol type, Symbol method, Symbol formal, int n) {
-        assert(type && method && formal);
-        foc[type][method][formal] = n;
-    }
-
-    // lookup an object in current class's context
-    // If it's an attribute, return its offset.
-    // Else it's an formal, return its order * -1.
-    // FIXME
-    int lookup_object(Symbol o) {
+    // lookup an object in the current context.
+    int lookup_object(Symbol o, int& offset) {
         assert(curr_class);
-        if (oc[curr_class].count(o)) {
-            return oc[curr_class->get_name()][o];
-        } else {
-            // FIXME
-            assert(curr_method);
-            return -foc[curr_class->get_name()][curr_method->get_name()][o];
+        extern Symbol self;
+        if (o == self) {
+            return SELFOBJ;
+        }
+
+        if (curr_method && curr_loc && curr_depth && loc.count(o)) {  // a local (let or case)
+            offset = local_offset(o);
+            return LOCAL;
+        } else if (aoc[curr_class->get_name()].count(o)) {  // an attribute
+            offset = attr_offset(o);
+            return ATTRIBUTE;
+        } else if (curr_method) {  // a formal
+            offset = formal_offset(o);
+            return FORMAL;
+        } else {  // should never reach here
+            assert(0);
         }
     }
 
-    offset_container oc;
-    formal_order_container foc;
+    CgenClassTableP classtable;
     CgenNodeP curr_class;
     Feature curr_method;
+
+    attr_offset_container aoc;
+    formal_offset_container foc;
+
+    depth_container dc;
+
+    int blc; // branch label counter
+    int curr_depth;
+    local_offset_container* curr_loc;
 };
 
 void emit_class_names(ostream& s, CgenNodeP node);
@@ -187,6 +217,8 @@ void emit_dispatch_table(ostream& s, env_type& e, const std::vector<method_class
 void emit_prototype_objects(ostream& s, env_type& e, const std::vector<Feature>& ias);
 void emit_class_methods(ostream& s, env_type& e);
 
-void emit_callee_set_up_code(ostream& s);
-void emit_callee_clean_up_code(ostream& s);
-void emit_callee_clean_up_code(ostream& s, int narg);
+void emit_precedure_set_up_code(ostream& s);
+void emit_precedure_set_up_code(ostream& s, int depth);
+void emit_precedure_clean_up_code(ostream& s);
+void emit_precedure_clean_up_code(ostream& s, int depth);
+void emit_precedure_clean_up_code(ostream& s, int depth, int narg);

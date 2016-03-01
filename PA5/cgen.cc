@@ -254,7 +254,7 @@ static void emit_method_ref(Symbol classname, Symbol methodname, ostream& s)
 static void emit_label_def(int l, ostream &s)
 {
   emit_label_ref(l,s);
-  s << ":" << endl;
+  s << LABEL << endl;
 }
 
 static void emit_beqz(char *source, int label, ostream &s)
@@ -842,6 +842,7 @@ void CgenClassTable::code()
 
   // walk through the inheritance graph and emit prototype objects etc.
   env_type e;
+  e.classtable = this;
   
   // class names
   str <<  CLASSNAMETAB << LABEL;
@@ -867,6 +868,9 @@ void CgenClassTable::code()
 //                   - etc...
 
   // TODO integrate initializer emission with method emission
+
+  // gather nested depths of `let' and `case' for each feature
+  gather_depth(e, probe(Object), false);
   
   // default initializers
   emit_object_initializers(str, e);
@@ -910,8 +914,8 @@ CgenNode::CgenNode(Class_ nd, Basicness bstatus, CgenClassTableP ct) :
 
 void assign_class::code(ostream& s, env_type& e) {
     expr->code(s, e);
-    int ret;
-    if ( (ret= e.lookup_object(name)) > 0) {
+    int ret = e.lookup_object(name);
+    if (ret > 0) {
         emit_store(ACC, ret, SELF, s);
     } else {
         emit_store(ACC, -ret*WORD_SIZE, FP, s);
@@ -925,12 +929,63 @@ void dispatch_class::code(ostream& s, env_type& e) {
 }
 
 void cond_class::code(ostream& s, env_type& e) {
+    int lable_number = e->blc;
+    e->blc += 2; // two labels needed: else branch, next statement
+    pred->code(s, e);
+
+    emit_load(T1, ACC, s);  // value of predicate
+    emit_load_address(T2, BOOLCONST_PREFIX"1", s);  // true
+
+    emit_load_address(ACC, BOOLCONST_PREFIX"1", s);  // true
+    emit_load_address(A1, BOOLCONST_PREFIX"0", s);  // false
+
+    emit_jal(EQUALITY_TEST, s);
+    emit_load(T1, DEFAULT_OBJFIELDS*4, ACC, s);  // equality
+    emit_beqz(T1, label_number, s);
+
+    then_exp->code(s, e);
+    emit_branch(label_number+1, s);
+
+    emit_label_def(label_number, s);
+    else_exp->code(s, e);
+
+    emit_label_def(label_number+1, s);
 }
 
 void loop_class::code(ostream& s, env_type& e) {
+    int label_number = e->blc;
+    e->blc += 2;  // two labels needed: loop start, next statement
+
+    emit_label_def(label_number, s);
+    pred->code(s, e);
+
+    emit_load(T1, ACC, s);  // value of predicate
+    emit_load_address(T2, BOOLCONST_PREFIX"0", s);  // true
+
+    emit_load_address(ACC, BOOLCONST_PREFIX"1", s);  // true
+    emit_load_address(A1, BOOLCONST_PREFIX"0", s);  // false
+
+    emit_jal(EQUALITY_TEST, s);
+    emit_load(T1, DEFAULT_OBJFIELDS*4, ACC, s);  // equality
+    emit_beqz(T1, label_number+1, s);
+
+    body->code(s, e);
+    emit_branch(label_number, s);
+
+    emit_label_def(label_number+1, s);
+    emit_load_address(ACC, OBJECTPROTOBJ, s);  // value of loop statement is Object
 }
 
 void typcase_class::code(ostream& s, env_type& e) {
+    // 1. select correct branch
+    // 2. bound value of expr to the identifier of the selected branch
+    // 3. evalute the corresponding expression
+    // 4. error handling (case on void or no matching branch found)
+    expr->code(s, e);
+
+    CgenNodeP node = e.classtable->probe(
+
+    expr->get_type() == ;
 }
 
 void block_class::code(ostream& s, env_type& e) {
@@ -996,12 +1051,24 @@ void new__class::code(ostream& s, env_type& e) {
 }
 
 void isvoid_class::code(ostream& s, env_type& e) {
+    e1->code(s, e);
+    emit_store
 }
 
 void no_expr_class::code(ostream& s, env_type& e) {
+    // this method does nothing, off course
 }
 
 void object_class::code(ostream& s, env_type& e) {
+    int ret = e.lookup_object(name);
+    if (ret == 0) {  // self
+        emit_move(ACC, SELF, s);
+    } else if (ret > 0) {  // attribute
+        emit_move(ACC, ret, SELF, s);
+    } else if {  // formal
+        emit_move(ACC, -ret*WORD_SIZE, FP, s);
+    } else {  // let local
+    }
 }
 
 
@@ -1061,6 +1128,7 @@ void emit_dispatch_table(ostream& s, env_type& e, const std::vector<method_class
             pms.insert(pms.begin(), *rit);
         }
     }
+    // TODO construct method offset container
     for (std::vector<method_classname_pair>::iterator it = pms.begin(); it != pms.end(); ++it) {
         s << WORD;
         emit_method_ref(it->second, it->first->get_name(), s);
@@ -1219,7 +1287,7 @@ void attr_class::code(ostream& s, env_type& e) {
     }
 
     // FIXME
-    init->code(s);
+    init->code(s, e);
     // save the address of the newly allocated object to the 
     // corresponding location of the object
     //
@@ -1233,7 +1301,7 @@ void method_class::code(ostream& s, env_type& e) {
     emit_move(SELF, ACC, s);
     
     // FIXME
-    expr->code(s);
+    expr->code(s, e);
 
     emit_precedure_clean_up_code(s, narg);
 }
@@ -1258,22 +1326,31 @@ void emit_class_methods(ostream& s, env_type& e) {
     }
 }
 
+
 void emit_precedure_set_up_code(ostream& s) {
-    emit_addiu(SP, SP, -WORD_SIZE*3, s);
-    emit_store(FP, 3, SP, s);
-    emit_store(SELF, 2, SP, s);
-    emit_store(RA, 1, SP, s);
-    emit_addiu(FP, SP, WORD_SIZE*3 ,s);
+    emit_precedure_set_up_code(s, 0);
+}
+
+void emit_precedure_set_up_code(ostream& s, int depth) {
+    emit_addiu(SP, SP, -WORD_SIZE*(FRAME_SIZE+depth), s);
+    emit_store(FP, FRAME_SIZE+depth, SP, s);
+    emit_store(SELF, FRAME_SIZE-1+depth, SP, s);
+    emit_store(RA, FRAME_SIZE-2+depth, SP, s);
+    emit_addiu(FP, SP, WORD_SIZE*(FRAME_SIZE+depth) ,s);
 }
 
 void emit_precedure_clean_up_code(ostream& s) {
-    emit_precedure_clean_up_code(s, 0);
+    emit_precedure_clean_up_code(s, 0, 0);
 }
 
-void emit_precedure_clean_up_code(ostream& s, int narg) {
-    emit_load(FP, 3, SP, s);
-    emit_load(SELF, 2, SP, s);
-    emit_load(RA, 1, SP, s);
-    emit_addiu(SP, SP, WORD_SIZE*(3+narg), s);
+void emit_precedure_clean_up_code(ostream& s, int depth) {
+    emit_precedure_clean_up_code(s, depth, 0);
+}
+
+void emit_precedure_clean_up_code(ostream& s, int depth, int narg) {
+    emit_load(FP, FRAME_SIZE+depth, SP, s);
+    emit_load(SELF, FRAME_SIZE-1+depth, SP, s);
+    emit_load(RA, FRAME_SIZE-2+depth, SP, s);
+    emit_addiu(SP, SP, WORD_SIZE*(FRAME_SIZE+narg), s);
     emit_return(s);
 }

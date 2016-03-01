@@ -105,4 +105,8 @@
 #define BLT      "\tblt\t"
 #define BGT      "\tbgt\t"
 
+#define EQUALITY_TEST "equality_test"
+#define CASE_NO_MATCH_ABORT "_case_abort"
+#define CASE_ON_VOID_ABORT "_case_abort2"
 
+#define FRAME_SIZE 3
