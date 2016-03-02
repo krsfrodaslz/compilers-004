@@ -7,7 +7,7 @@
 #include <map>
 #include <string>
 #include <utility>  // pair
-#include <algorithm>  // find_if
+#include <algorithm>  // find_if, max_element, max
 
 enum Basicness     {Basic, NotBasic};
 #define TRUE 1
@@ -113,8 +113,8 @@ public:
     typedef std::map<Symbol, std::map<Symbol, std::map<Symbol, int> > > formal_offset_container;
     // type, method, max_let_and_case_nested_depth
     typedef std::map<Symbol, std::map<Symbol, int> > method_depth_container;
-    // type, attribute, max_let_and_case_nested_depth
-    typedef std::map<Symbol, std::map<Symbol, int> > attr_depth_container;
+    // type max_let_and_case_nested_depth of attributes
+    typedef std::map<Symbol, int> attr_depth_container;
     // local variable (let or case), offset (dynamic)
     typedef std::vector<std::pair<Symbol, int> > local_offset_container;
 
@@ -159,6 +159,16 @@ public:
         assert(0);
     }
 
+    int attr_depth_info() {
+        assert(curr_class);
+        return adc[curr_class->get_name()];
+    }
+
+    int method_depth_info() {
+        assert(curr_class && curr_method);
+        return mdc[curr_class->get_name()][curr_method->get_name()];
+    }
+
     
     void set_attr_offset(Symbol attr, int n) {
         assert(curr_class && attr);
@@ -172,7 +182,19 @@ public:
 
     void set_local_offset(Symbol local) {
         assert(curr_class && curr_method && curr_loc && curr_depth && local);
-        loc.push_back(std::make_pair(local, (FRAME_SIZE+curr_depth-1)*WORD_SIZE));
+        curr_loc->push_back(std::make_pair(local, (FRAME_SIZE+curr_depth-1)*WORD_SIZE));
+    }
+
+    void set_attr_depth_info(int depth) {
+        assert(curr_class);
+        if (depth > adc[curr_class->get_name()]) {
+            adc[curr_class->get_name()] = depth;
+        }
+    }
+
+    void set_method_depth_info(int depth) {
+        assert(curr_class && curr_method);
+        mdc[curr_class->get_name()][curr_method->get_name()] = depth;
     }
 
     // lookup an object in the current context.
@@ -204,11 +226,28 @@ public:
     attr_offset_container aoc;
     formal_offset_container foc;
 
-    depth_container dc;
+    method_depth_container mdc;
+    attr_depth_container adc;
 
     int blc; // branch label counter
     int curr_depth;
     local_offset_container* curr_loc;
+};
+
+class compare_branch_var_type {
+public:
+    compare_branch_var_type(CgenClassTableP ct):
+        _ct(ct)
+    {}
+
+    // FIXME
+    bool operator() (const Case& a, const Case& b) {
+        CgenNodeP node_a = _ct->probe(a->get_type());
+        CgenNodeP node_b = _ct->probe(b->get_type());
+        return node_a->get_class_tag() < node_b->get_class_tag();
+    }
+
+    CgenClassTableP _ct;
 };
 
 void emit_class_names(ostream& s, CgenNodeP node);

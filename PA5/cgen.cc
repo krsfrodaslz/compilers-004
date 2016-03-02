@@ -625,7 +625,9 @@ CgenClassTable::CgenClassTable(Classes classes, ostream& s) : nds(NULL) , str(s)
    install_classes(classes);
    build_inheritance_tree();
 
-   // simplely generate class tags
+   // FIXME
+   // we must ensure that the class tag of a class is less
+   // than its parent's class tag
    int count = list_length(nds);
    for(List<CgenNode> *l = nds; l; l = l->tl()) {
        l->hd()->set_class_tag(count--);
@@ -870,7 +872,7 @@ void CgenClassTable::code()
   // TODO integrate initializer emission with method emission
 
   // gather nested depths of `let' and `case' for each feature
-  gather_depth(e, probe(Object), false);
+  gather_depth(e);
   
   // default initializers
   emit_object_initializers(str, e);
@@ -914,11 +916,23 @@ CgenNode::CgenNode(Class_ nd, Basicness bstatus, CgenClassTableP ct) :
 
 void assign_class::code(ostream& s, env_type& e) {
     expr->code(s, e);
-    int ret = e.lookup_object(name);
-    if (ret > 0) {
-        emit_store(ACC, ret, SELF, s);
-    } else {
-        emit_store(ACC, -ret*WORD_SIZE, FP, s);
+
+    env_type::id_type idtype;
+    int offset;
+    idtype = e.lookup_object(name, &offset);
+    switch (idtype) {
+    case env_type::ATTRIBUTE:
+        emit_store(ACC, offset, SELF, s);
+        break;
+    case env_type::FORMAL:
+        emit_store(ACC, offset, FP, s);
+        break;
+    case env_type::LOCAL:
+        emit_store(ACC, offset, FP, s);
+        break;
+    case env_type::SELFOBJ:  // semantic analyzer ensures it won't happen
+    default:
+        assert(0);
     }
 }
 
@@ -930,17 +944,17 @@ void dispatch_class::code(ostream& s, env_type& e) {
 
 void cond_class::code(ostream& s, env_type& e) {
     int lable_number = e->blc;
-    e->blc += 2; // two labels needed: else branch, next statement
+    e->blc += 2; // one for else branch, one for next statement
     pred->code(s, e);
 
-    emit_load(T1, ACC, s);  // value of predicate
-    emit_load_address(T2, BOOLCONST_PREFIX"1", s);  // true
+    emit_load(T1, ACC, s);  // value of predicate (t1)
+    emit_load_address(T2, BOOLCONST_PREFIX"1", s);  // true (t2)
 
     emit_load_address(ACC, BOOLCONST_PREFIX"1", s);  // true
     emit_load_address(A1, BOOLCONST_PREFIX"0", s);  // false
 
     emit_jal(EQUALITY_TEST, s);
-    emit_load(T1, DEFAULT_OBJFIELDS*4, ACC, s);  // equality
+    emit_load(T1, DEFAULT_OBJFIELDS*WORD_SIZE, ACC, s);  // equality (t1 == t2)
     emit_beqz(T1, label_number, s);
 
     then_exp->code(s, e);
@@ -954,7 +968,7 @@ void cond_class::code(ostream& s, env_type& e) {
 
 void loop_class::code(ostream& s, env_type& e) {
     int label_number = e->blc;
-    e->blc += 2;  // two labels needed: loop start, next statement
+    e->blc += 2;  // one for loop start, one for next statement
 
     emit_label_def(label_number, s);
     pred->code(s, e);
@@ -973,19 +987,68 @@ void loop_class::code(ostream& s, env_type& e) {
     emit_branch(label_number, s);
 
     emit_label_def(label_number+1, s);
-    emit_load_address(ACC, OBJECTPROTOBJ, s);  // value of loop statement is Object
+    emit_load_imm(ACC, 0, s);  // return `void'
 }
 
+// TODO OPT
+// we can totally ignore those branches whose identifiers
+// have types that are not on the inheritance path of
+// the type of `expr0'
 void typcase_class::code(ostream& s, env_type& e) {
-    // 1. select correct branch
-    // 2. bound value of expr to the identifier of the selected branch
-    // 3. evalute the corresponding expression
-    // 4. error handling (case on void or no matching branch found)
     expr->code(s, e);
 
-    CgenNodeP node = e.classtable->probe(
+    int label_number = e.blc;
+    // n for n branches
+    // one for no matching branch error
+    // one for next statement
+    e.blc += 2 + cases->len();
 
-    expr->get_type() == ;
+    // case on `void'
+    emit_bne(ACC, ZERO, label_number, s);
+    // see `_case_abort2' for details
+    emit_load_address(ACC, e.curr_class->get_filename()->get_string(), s);
+    emit_load_imm(T1, 1, s);
+    emit_jal(CASE_ON_VOID_ABORT, s);
+
+    // Sort the branches by the type of their declared variables
+    // and always generate code for derived classes first.
+    // However this requires that the class tag of a class
+    // if less than its parent's class tag.
+    std::vector<Case> branches;
+    for (int i = cases->first(); cases->more(i); cases->next(i)) {
+        branches.push_back(cases->nth(i));
+    }
+    // ascending order (class 0, class 1, ...)
+    // FIXME
+    std::sort(branches.begin(), branches.end(), compare_branch_var_type(e.classtable));
+    for (std::vector<Case>::const_reverse_iterator rit = branches.rbegin();
+            rit != branches.rend(); ++rit) {
+        emit_label_def(label_number, s);
+        (*rit)->code(s, e);
+        ++label_number;
+    }
+    emit_branch(label_number+1, s);
+    
+    // no matching branch error
+    emit_label_def(label_number++, s);
+    emit_jal(CASE_NO_MATCH_ABORT, s);
+
+    emit_label_def(label_number, s);
+}
+
+void branch_class::code(ostream& s, env_type& e) {
+    ++e.curr_depth;
+
+    // branch if the type of `expr0' is not an ancestor
+    // of type `type_decl'
+    
+    // add identifier to the context
+    e.set_local_offset(name);
+
+
+    expr->code(s, e);
+
+    --e.curr_depth;
 }
 
 void block_class::code(ostream& s, env_type& e) {
@@ -1128,19 +1191,21 @@ void emit_dispatch_table(ostream& s, env_type& e, const std::vector<method_class
             pms.insert(pms.begin(), *rit);
         }
     }
-    // TODO construct method offset container
     for (std::vector<method_classname_pair>::iterator it = pms.begin(); it != pms.end(); ++it) {
         s << WORD;
         emit_method_ref(it->second, it->first->get_name(), s);
         s << endl;
 
-        // avoid duplicate record FIXME
+        // avoid duplicate record
+        Feature curr_method_save = e.curr_method;
+        e.curr_method = it->first;
         if (it->second == e.curr_class->get_name()) {
             Formals formals = it->first->get_formals();
             for (int j = formals->first(); formals->more(j); j = formals->next(j)) {
-                e.set_order(it->first->get_name(), formals->nth(j)->get_name(), j+1);
+                e.set_formal_offset(formals->nth(j)->get_name(), j+1);
             }
         }
+        e.curr_method = curr_method_save;
     }
     for (List<CgenNode>* c = e.curr_class->get_children(); c; c = c->tl()) {
         CgenNodeP curr_class_save = e.curr_class;
@@ -1191,7 +1256,7 @@ void emit_prototype_objects(ostream& s, env_type& e, const std::vector<Feature>&
         s << endl;
 
         // construct offset container
-        e.set_offset(attr->get_name(), WORD_SIZE*offset++);
+        e.set_attr_offset(attr->get_name(), WORD_SIZE*offset++);
     }
 
     for (List<CgenNode>* c = e.curr_class->get_children(); c; c = c->tl()) {
@@ -1200,6 +1265,153 @@ void emit_prototype_objects(ostream& s, env_type& e, const std::vector<Feature>&
         emit_prototype_objects(s, e, pas);
         e.curr_class = curr_class_save;
     }
+}
+
+void gather_depth(env_type& e) {
+
+    e.curr_class->gather_depth(e);
+
+    for (List<CgenNode>* c = e.curr_class->get_children(); c; c = c->tl()) {
+        CgenNodeP curr_class_save = e.curr_class;
+        c->hd()->gather_depth(e);
+        e.curr_class = curr_class_save;
+    }
+}
+
+void class__class::gather_depth(env_type& e) {
+    e.curr_class = this;
+    for (int i = features->first(); features->more(i); i = features->next(i)) {
+        features->nth(i)->gather_depth(e);
+    }
+}
+
+void attr_class::gather_depth(env_type& e) {
+    int depth = init->gather_depth(e);
+    e.set_attr_depth_info(depth);
+}
+
+void method_class::gather_depth(env_type& e) {
+    e.curr_method = this;
+    int depth = init->gather_depth(e);
+    e.set_method_depth_info(name, depth);
+    e.curr_method = 0;
+}
+
+// case branches count
+int branch_class::gather_depth(env_type& e) {
+    return 1 + expr->gather_depth(e);
+}
+
+int assign_class::gather_depth(env_type& e) {
+    return expr->gather_depth(e);
+}
+
+int static_dispatch_class::gather_depth(env_type& e) {
+    int depth = expr->gather_depth(e);
+    for (int i = actual->first(); actual->more(i); i = actual->next(i)) {
+        depth = std::max(depth, actual->nth(i)->gather_depth(e));
+    }
+    return depth;
+}
+
+int dispatch_class::gather_depth(env_type& e) {
+    int depth = expr->gather_depth(e);
+    for (int i = actual->first(); actual->more(i); i = actual->next(i)) {
+        depth = std::max(depth, actual->nth(i)->gather_depth(e));
+    }
+    return depth;
+}
+
+int cond_class::gather_depth(env_type& e) {
+    return std::max(pred->gather_depth(e), std::max(then_exp->gather_depth(e),
+            else_exp->gather_depth(e)));
+}
+
+int loop_class::gather_depth(env_type& e) {
+    return std::max(pred->gather_depth(e), body->gather_depth(e));
+}
+
+int typcase_class::gather_depth(env_type& e) {
+    int depth = -1;
+    for (int i = cases->first(); cases->more(i); i = cases->next(i)) {
+        depth = std::max(depth, cases->nth(i)->gather_depth(e));
+    }
+    return depth;
+}
+
+int block_class::gather_depth(env_type& e) {
+    int depth = -1;
+    for (int i = body->first(); body->more(i); i = body->next(i)) {
+        depth = std::max(depth, body->nth(i)->gather_depth(e));
+    }
+    return depth;
+}
+
+// let statements count
+int let_class::gather_depth(env_type& e) {
+    return 1 + std::max(init->gather_depth(e), body->gather_depth(e));
+}
+
+int plus_class::gather_depth(env_type& e) {
+    return std::max(e1->gather_depth(e), e2->gather_depth(e));
+}
+
+int sub_class::gather_depth(env_type& e) {
+    return std::max(e1->gather_depth(e), e2->gather_depth(e));
+}
+
+int mul_class::gather_depth(env_type& e) {
+    return std::max(e1->gather_depth(e), e2->gather_depth(e));
+}
+
+int divide_class::gather_depth(env_type& e) {
+    return std::max(e1->gather_depth(e), e2->gather_depth(e));
+}
+
+int neg_class::gather_depth(env_type& e) {
+    return e1->gather_depth(e);
+}
+
+int lt_class::gather_depth(env_type& e) {
+    return std::max(e1->gather_depth(e), e2->gather_depth(e));
+}
+
+int eq_class::gather_depth(env_type& e) {
+    return std::max(e1->gather_depth(e), e2->gather_depth(e));
+}
+
+int leq_class::gather_depth(env_type& e) {
+    return std::max(e1->gather_depth(e), e2->gather_depth(e));
+}
+
+int comp_class::gather_depth(env_type& e) {
+    return e1->gather_depth(e);
+}
+
+int int_const_class::gather_depth(env_type& e) {
+    return 0;
+
+}
+int bool_const_class::gather_depth(env_type& e) {
+    return 0;
+
+}
+int string_const_class::gather_depth(env_type& e) {
+    return 0;
+}
+
+int new__class::gather_depth(env_type& e) {
+    return 0;
+}
+int isvoid_class::gather_depth(env_type& e) {
+    return e1->gather_depth(e);
+}
+int no_expr_class::gather_depth(env_type& e) {
+    return 0;
+}
+
+int object_class::gather_depth(env_type& e) {
+    return 0;
 }
 
 /*
@@ -1251,7 +1463,8 @@ void emit_object_initializers(ostream& s, env_type& e) {
     // 2. save caller-saved registers if needed ($a0-$a3, $t0-$t9)
     // 3. execute jal
     
-    emit_precedure_set_up_code(s);
+    int depth = attr_depth_info();
+    emit_precedure_set_up_code(s, depth);
     emit_move(SELF, ACC, s);
 
     CgenNodeP parent = e.curr_class->get_parentnd();
@@ -1271,7 +1484,7 @@ void emit_object_initializers(ostream& s, env_type& e) {
     }
 
     emit_move(ACC, SELF, s);
-    emit_precedure_clean_up_code(s);
+    emit_precedure_clean_up_code(s, depth);
 
     for (List<CgenNode>* c = e.curr_class->get_children(); c; c = c->tl()) {
         CgenNodeP curr_class_save = e.curr_class;
@@ -1286,24 +1499,38 @@ void attr_class::code(ostream& s, env_type& e) {
         return;
     }
 
-    // FIXME
+    // create a new offset container for locals in the
+    // initialization expression and set e.curr_loc points
+    // to it
+    env_type::local_offset_container loc;
+    e.curr_loc = &loc;
+
     init->code(s, e);
-    // save the address of the newly allocated object to the 
+    // save the address of the newly allocated object to the
     // corresponding location of the object
-    //
-    // return value saved in $a0 if init is not no_expr
-    emit_store(ACC, e.offset(name), SELF, s);
+    emit_store(ACC, e.attr_offset(name), SELF, s);
+
+    // restore
+    e.curr_loc = 0;
 }
 
 void method_class::code(ostream& s, env_type& e) {
+    e.curr_method = this;  // important
+
+    env_type::local_offset_container loc;
+    e.curr_loc = &loc;
+
     int narg = dynamic_cast<method_class*>(ft)->get_formals()->len();
-    emit_precedure_set_up_code(s);
+    int depth = e.method_depth_info();
+    emit_precedure_set_up_code(s, depth);
     emit_move(SELF, ACC, s);
     
-    // FIXME
     expr->code(s, e);
 
-    emit_precedure_clean_up_code(s, narg);
+    emit_precedure_clean_up_code(s, depth, narg);
+
+    e.curr_loc = 0;
+    e.curr_method = 0;
 }
 
 void emit_class_methods(ostream& s, env_type& e) {
