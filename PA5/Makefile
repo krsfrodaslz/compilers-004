@@ -2,7 +2,7 @@ CXX= c++
 
 INC= -I.
 
-CFLAGS=-g -Wall -Wno-unused -Wno-write-strings -Wno-deprecated $(INC) -DDEBUG
+CFLAGS+=-g -Wall -Wno-unused -Wno-write-strings -Wno-deprecated $(INC) -DDEBUG
 
 LIB= -lfl
 

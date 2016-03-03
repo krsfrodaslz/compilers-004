@@ -49,7 +49,7 @@ Symbol
        Bool,
        concat,
        cool_abort,
-       copy,
+       copy_meth,
        Int,
        in_int,
        in_string,
@@ -80,7 +80,7 @@ static void initialize_constants(void)
   Bool        = idtable.add_string("Bool");
   concat      = idtable.add_string("concat");
   cool_abort  = idtable.add_string("abort");
-  copy        = idtable.add_string("copy");
+  copy_meth   = idtable.add_string("copy");
   Int         = idtable.add_string("Int");
   in_int      = idtable.add_string("in_int");
   in_string   = idtable.add_string("in_string");
@@ -254,7 +254,7 @@ static void emit_method_ref(Symbol classname, Symbol methodname, ostream& s)
 static void emit_label_def(int l, ostream &s)
 {
   emit_label_ref(l,s);
-  s << LABEL << endl;
+  s << LABEL;
 }
 
 static void emit_beqz(char *source, int label, ostream &s)
@@ -313,6 +313,12 @@ static void emit_branch(int l, ostream& s)
   s << endl;
 }
 
+static void emit_jal_method(Symbol classname, Symbol methodname, ostream& s) {
+    s << JAL;
+    emit_method_ref(classname, methodname, s);
+    s << endl;
+}
+
 //
 // Push a register on the stack. The stack grows towards smaller addresses.
 //
@@ -354,6 +360,22 @@ static void emit_gc_check(char *source, ostream &s)
   s << JAL << "_gc_check" << endl;
 }
 
+//
+//
+static void emit_class_names(ostream& s, CgenNodeP node);
+static void emit_class_object_table(ostream& s, CgenNodeP node);
+static void emit_dispatch_table(ostream& s, env_type& e, const std::vector<method_classname_pair>& ims);
+static void emit_prototype_objects(ostream& s, env_type& e, const std::vector<Feature>& ias);
+static void gather_depth(env_type& e);
+static void emit_object_initializers(ostream& s, env_type& e);
+static void emit_class_methods(ostream& s, env_type& e);
+
+static void emit_precedure_set_up_code(ostream& s);
+static void emit_precedure_set_up_code(ostream& s, int depth);
+static void emit_precedure_clean_up_code(ostream& s);
+static void emit_precedure_clean_up_code(ostream& s, int depth);
+static void emit_precedure_clean_up_code(ostream& s, int depth, int narg);
+//
 
 ///////////////////////////////////////////////////////////////////////////////
 //
@@ -490,6 +512,7 @@ void BoolConst::code_def(ostream& s, int boolclasstag)
 
  /***** Add dispatch information for class Bool ******/
 
+      emit_disptable_ref(Bool, s);
       s << endl;                                            // dispatch table
       s << WORD << val << endl;                             // value (0 or 1)
 }
@@ -625,13 +648,10 @@ CgenClassTable::CgenClassTable(Classes classes, ostream& s) : nds(NULL) , str(s)
    install_classes(classes);
    build_inheritance_tree();
 
-   // FIXME
    // we must ensure that the class tag of a class is less
    // than its parent's class tag
-   int count = list_length(nds);
-   for(List<CgenNode> *l = nds; l; l = l->tl()) {
-       l->hd()->set_class_tag(count--);
-   }
+   int count = 0;
+   set_class_tags(probe(Object), count);
 
    intclasstag = probe(Int)->get_class_tag();
    stringclasstag = probe(Str)->get_class_tag();
@@ -683,7 +703,7 @@ void CgenClassTable::install_basic_classes()
            append_Features(
            single_Features(method(cool_abort, nil_Formals(), Object, no_expr())),
            single_Features(method(type_name, nil_Formals(), Str, no_expr()))),
-           single_Features(method(copy, nil_Formals(), SELF_TYPE, no_expr()))),
+           single_Features(method(copy_meth, nil_Formals(), SELF_TYPE, no_expr()))),
 	   filename),
     Basic,this));
 
@@ -879,6 +899,7 @@ void CgenClassTable::code()
 
   // class methods
   emit_class_methods(str, e);
+  e.curr_class = 0;
 }
 
 
@@ -887,6 +908,24 @@ CgenNodeP CgenClassTable::root()
    return probe(Object);
 }
 
+bool CgenClassTable::is_ancestor(Symbol t1, Symbol t2) {
+    CgenNodeP node = probe(t2);
+    while (node && node->get_name() != t1) {
+        node = node->get_parentnd();
+    }
+    if (node) {
+        return true;
+    }
+    return false;
+}
+
+void CgenClassTable::set_class_tags(CgenNodeP node, int& count) {
+    node->set_class_tag(count++);
+
+    for (List<CgenNode>* c = node->get_children(); c; c = c->tl()) {
+        set_class_tags(c->hd(), count);
+    }
+}
 
 ///////////////////////////////////////////////////////////////////////
 //
@@ -919,7 +958,7 @@ void assign_class::code(ostream& s, env_type& e) {
 
     env_type::id_type idtype;
     int offset;
-    idtype = e.lookup_object(name, &offset);
+    idtype = e.lookup_object(name, offset);
     switch (idtype) {
     case env_type::ATTRIBUTE:
         emit_store(ACC, offset, SELF, s);
@@ -937,24 +976,86 @@ void assign_class::code(ostream& s, env_type& e) {
 }
 
 void static_dispatch_class::code(ostream& s, env_type& e) {
+    int label_number = e.blc++;
+
+    // push arguments onto the stack in reverse order
+    for (int i = actual->len()-1; i >= 0; --i) {
+        actual->nth(i)->code(s, e);
+        emit_push(ACC, s);
+    }
+
+    expr->code(s, e);
+    emit_bne(ACC, ZERO, label_number, s);  // dispatch on void error
+    emit_partial_load_address(ACC, s);
+    stringtable.lookup_string(e.curr_class->get_filename()->get_string())->code_ref(s);
+    s << endl;
+    emit_load_imm(T1, 1, s);
+    emit_jal(DISPATCH_ON_VOID_ABORT, s);
+
+    emit_label_def(label_number, s);
+
+    emit_push(T1, s);
+    emit_push(ACC, s);
+
+    emit_partial_load_address(ACC, s);
+    emit_disptable_ref(type_name, s);
+    s << endl;
+    emit_load(T1, e.method_offset(type_name, name), ACC, s);
+    emit_load(ACC, 1, SP, s);
+    emit_jalr(T1, s);  // ready to call
+
+    emit_load(T1, 2, SP, s);
+    emit_addiu(SP, SP, -8, s);
 }
 
 void dispatch_class::code(ostream& s, env_type& e) {
+    int label_number = e.blc++;
+
+    expr->code(s, e);
+    emit_bne(ACC, ZERO, label_number, s);  // dispatch on void error
+    emit_partial_load_address(ACC, s);
+    stringtable.lookup_string(e.curr_class->get_filename()->get_string())->code_ref(s);
+    s << endl;
+    emit_load_imm(T1, 1, s);
+    emit_jal(DISPATCH_ON_VOID_ABORT, s);
+
+    emit_label_def(label_number, s);
+    for (int i = actual->len()-1; i >= 0; --i) {
+        actual->nth(i)->code(s, e);
+        emit_push(ACC, s);
+    }
+
+    Symbol caller_type = expr->get_type();
+    if (caller_type == SELF_TYPE) {
+        caller_type = e.curr_class->get_name();
+    }
+    emit_push(T1, s);
+
+    emit_push(ACC, s);
+    emit_partial_load_address(ACC, s);
+    emit_disptable_ref(caller_type, s);
+    s << endl;
+    emit_load(T1, e.method_offset(caller_type, name), ACC, s);
+    emit_load(ACC, 1, SP, s);
+    emit_jalr(T1, s);  // ready to call
+
+    emit_load(T1, 2, SP, s);
+    emit_addiu(SP, SP, -8, s);
 }
 
 void cond_class::code(ostream& s, env_type& e) {
-    int lable_number = e->blc;
-    e->blc += 2; // one for else branch, one for next statement
+    int label_number = e.blc;
+    e.blc += 2; // one for else branch, one for the next statement
     pred->code(s, e);
 
-    emit_load(T1, ACC, s);  // value of predicate (t1)
+    emit_move(T1, ACC, s);  // value of predicate (t1)
     emit_load_address(T2, BOOLCONST_PREFIX"1", s);  // true (t2)
 
-    emit_load_address(ACC, BOOLCONST_PREFIX"1", s);  // true
-    emit_load_address(A1, BOOLCONST_PREFIX"0", s);  // false
+    emit_load_imm(ACC, 1, s);  // true
+    emit_load_imm(ACC, 0, s);  // false
 
     emit_jal(EQUALITY_TEST, s);
-    emit_load(T1, DEFAULT_OBJFIELDS*WORD_SIZE, ACC, s);  // equality (t1 == t2)
+    emit_move(T1, ACC, s);  // equality (t1 == t2)
     emit_beqz(T1, label_number, s);
 
     then_exp->code(s, e);
@@ -967,20 +1068,20 @@ void cond_class::code(ostream& s, env_type& e) {
 }
 
 void loop_class::code(ostream& s, env_type& e) {
-    int label_number = e->blc;
-    e->blc += 2;  // one for loop start, one for next statement
+    int label_number = e.blc;
+    e.blc += 2;  // one for loop start, one for the next statement
 
     emit_label_def(label_number, s);
     pred->code(s, e);
 
-    emit_load(T1, ACC, s);  // value of predicate
+    emit_move(T1, ACC, s);  // value of predicate
     emit_load_address(T2, BOOLCONST_PREFIX"0", s);  // true
 
-    emit_load_address(ACC, BOOLCONST_PREFIX"1", s);  // true
-    emit_load_address(A1, BOOLCONST_PREFIX"0", s);  // false
+    emit_load_imm(ACC, 1, s);  // true
+    emit_load_imm(ACC, 0, s);  // false
 
     emit_jal(EQUALITY_TEST, s);
-    emit_load(T1, DEFAULT_OBJFIELDS*4, ACC, s);  // equality
+    emit_move(T1, ACC, s);  // equality (t1 == t2)
     emit_beqz(T1, label_number+1, s);
 
     body->code(s, e);
@@ -991,22 +1092,36 @@ void loop_class::code(ostream& s, env_type& e) {
 }
 
 // TODO OPT
-// we can totally ignore those branches whose identifiers
-// have types that are not on the inheritance path of
-// the type of `expr0'
+// Since case statements in COOL operate on types instead of
+// values and we know pretty much information about types at
+// compile time. We can totally ignore those branches whose 
+// identifiers have types that are not on the 'inheritance path'
+// of the the type of `expr0'.
+//
+// We can even filter more useless branches by the method describe
+// below (make a marker).
+//
+// However, this sounds ridiculous because it seems that the compiler
+// does too much. I wonder if this should be implemented.
 void typcase_class::code(ostream& s, env_type& e) {
     expr->code(s, e);
 
-    int label_number = e.blc;
+    int label_number = e.blc, last_label = label_number++;
     // n for n branches
     // one for no matching branch error
-    // one for next statement
+    // one for the next statement
     e.blc += 2 + cases->len();
+
+    // push $t2 onto the stack
+    emit_push(T2, s);
+    emit_load(T2, 0, ACC, s);   // the class tag of `expr0'
 
     // case on `void'
     emit_bne(ACC, ZERO, label_number, s);
     // see `_case_abort2' for details
-    emit_load_address(ACC, e.curr_class->get_filename()->get_string(), s);
+    emit_partial_load_address(ACC, s);
+    stringtable.lookup_string(e.curr_class->get_filename()->get_string())->code_ref(s);
+    s << endl;
     emit_load_imm(T1, 1, s);
     emit_jal(CASE_ON_VOID_ABORT, s);
 
@@ -1015,73 +1130,255 @@ void typcase_class::code(ostream& s, env_type& e) {
     // However this requires that the class tag of a class
     // if less than its parent's class tag.
     std::vector<Case> branches;
-    for (int i = cases->first(); cases->more(i); cases->next(i)) {
+    for (int i = cases->first(); cases->more(i); i = cases->next(i)) {
         branches.push_back(cases->nth(i));
     }
     // ascending order (class 0, class 1, ...)
-    // FIXME
     std::sort(branches.begin(), branches.end(), compare_branch_var_type(e.classtable));
+
+    // mark the ending type of matching
+    // 
+    // For example, if the type of `expr0' is T, mark the nearest
+    // ancestor of T that occurs in the candidating branches. If
+    // T is SELF_TYPEc, we do same thing by marking the nearest 
+    // ancestor of C that it occurs.
+    // If none of those ancestors appeared, we don't mark anything.
+    // 
+    // During matching, if we meet an exactly matched branch before
+    // we meet the marked one, we choose that branch. Otherwise, we
+    // keep going on until we meet the marked one. In both cases,
+    // the branch we choosed is the best match. If neither of these
+    // happen, we fallback to a no matching error.
+    
+    Symbol type_ref = expr->get_type();
+    if (type_ref == SELF_TYPE) {
+        type_ref = e.curr_class->get_name();
+    }
+    std::vector<Case>::const_reverse_iterator marker = branches.rend();
+    for (std::vector<Case>::const_reverse_iterator rit = branches.rbegin();
+            rit != branches.rend(); ++rit) {
+        Symbol type_cand = (*rit)->get_type();
+        if (e.classtable->is_ancestor(type_cand, type_ref)) {
+            marker = rit;
+            break;
+        }
+    }
+
     for (std::vector<Case>::const_reverse_iterator rit = branches.rbegin();
             rit != branches.rend(); ++rit) {
         emit_label_def(label_number, s);
+        int class_tag_cand = e.classtable->probe((*rit)->get_type())->get_class_tag();
+        if (rit != marker) {
+            emit_bgti(T2, class_tag_cand, label_number+1, s);
+            emit_blti(T2, class_tag_cand, label_number+1, s);
+        } else {
+            emit_blti(T2, class_tag_cand, label_number+1, s);
+            // branches after this one will never be selected
+        }
         (*rit)->code(s, e);
         ++label_number;
+        emit_branch(last_label, s);
     }
-    emit_branch(label_number+1, s);
-    
     // no matching branch error
-    emit_label_def(label_number++, s);
+    emit_label_def(label_number, s);
     emit_jal(CASE_NO_MATCH_ABORT, s);
 
-    emit_label_def(label_number, s);
+    emit_label_def(last_label, s);
+
+    emit_load(T2, 4, SP, s);    // pop $t2
+    emit_addiu(SP, SP, -4, s);
 }
 
 void branch_class::code(ostream& s, env_type& e) {
     ++e.curr_depth;
 
-    // branch if the type of `expr0' is not an ancestor
-    // of type `type_decl'
-    
     // add identifier to the context
     e.set_local_offset(name);
 
+    // bind a0 to variable `name'
+    emit_store(ACC, e.local_offset(name), FP, s);
 
     expr->code(s, e);
 
     --e.curr_depth;
+    e.pop_the_last_local();
 }
 
 void block_class::code(ostream& s, env_type& e) {
+    for (int i = body->first(); body->more(i); i = body->next(i)) {
+        body->nth(i)->code(s, e);
+    }
 }
 
 void let_class::code(ostream& s, env_type& e) {
+    ++e.curr_depth;
+
+    // initialize the identifier
+    Symbol td = type_decl;
+    if (td == SELF_TYPE) {
+        td = e.curr_class->get_name();
+    }
+
+    if (init->get_type() != No_type) {
+        emit_partial_load_address(ACC, s);
+        emit_protobj_ref(Object, s);
+        emit_jal_method(Object, copy_meth, s);
+        s << JAL;
+        emit_init_ref(td, s);
+        s << endl;
+    } else {
+        init->code(s, e);  // just a single line, sweet:)
+    }
+
+    e.set_local_offset(identifier);
+    emit_store(ACC, e.local_offset(identifier), FP, s);
+
+    --e.curr_depth;
 }
 
 void plus_class::code(ostream& s, env_type& e) {
+    e1->code(s, e);
+    emit_push(T1, s);
+    emit_move(T1, ACC, s);
+    e2->code(s, e);
+    emit_push(T2, s);
+    emit_move(T2, ACC, s);
+    emit_add(T1, T1, T2, s);
+    // $a0 contains an `Int' object
+    emit_store(T1, DEFAULT_OBJFIELDS, ACC, s);
+    emit_load(T1, 2, SP, s);
+    emit_load(T2, 1, SP, s);
+    emit_addiu(SP, SP, -8, s);
 }
 
 void sub_class::code(ostream& s, env_type& e) {
+    e1->code(s, e);
+    emit_push(T1, s);
+    emit_load(T1, DEFAULT_OBJFIELDS, ACC, s);
+    e2->code(s, e);
+    emit_push(T2, s);
+    emit_load(T2, DEFAULT_OBJFIELDS, ACC, s);
+    emit_sub(T1, T1, T2, s);
+    emit_store(T1, DEFAULT_OBJFIELDS, ACC, s);
+    emit_load(T1, 2, SP, s);
+    emit_load(T2, 1, SP, s);
+    emit_addiu(SP, SP, -8, s);
 }
 
 void mul_class::code(ostream& s, env_type& e) {
+    e1->code(s, e);
+    emit_push(T1, s);
+    emit_load(T1, DEFAULT_OBJFIELDS, ACC, s);
+    e2->code(s, e);
+    emit_push(T2, s);
+    emit_load(T2, DEFAULT_OBJFIELDS, ACC, s);
+    emit_mul(T1, T1, T2, s);
+    emit_store(T1, DEFAULT_OBJFIELDS, ACC, s);
+    emit_load(T1, 2, SP, s);
+    emit_load(T2, 1, SP, s);
+    emit_addiu(SP, SP, -8, s);
 }
 
 void divide_class::code(ostream& s, env_type& e) {
+    e1->code(s, e);
+    emit_push(T1, s);
+    emit_load(T1, DEFAULT_OBJFIELDS, ACC, s);
+    e2->code(s, e);
+    emit_push(T2, s);
+    emit_load(T2, DEFAULT_OBJFIELDS, ACC, s);
+    emit_div(T1, T1, T2, s);
+    emit_store(T1, DEFAULT_OBJFIELDS, ACC, s);
+    emit_load(T1, 2, SP, s);
+    emit_load(T2, 1, SP, s);
+    emit_addiu(SP, SP, -8, s);
 }
 
 void neg_class::code(ostream& s, env_type& e) {
+    e1->code(s, e);
+    emit_push(T1, s);
+    emit_load(T1, DEFAULT_OBJFIELDS, ACC, s);
+    emit_neg(T1, T1, s);
+    emit_store(T1, DEFAULT_OBJFIELDS, ACC, s);
+    emit_load(T1, 1, SP, s);
+    emit_addiu(SP, SP, -4, s);
 }
 
 void lt_class::code(ostream& s, env_type& e) {
+    int label_number = e.blc;
+    e.blc += 2;  // one for false, one for the next statement
+
+    e1->code(s, e);
+    emit_push(T1, s);
+    emit_load(T1, DEFAULT_OBJFIELDS, ACC, s);
+    e2->code(s, e);
+    emit_push(T2, s);
+    emit_load(T2, DEFAULT_OBJFIELDS, ACC, s);
+    emit_sub(T1, T1, T2, s);
+    emit_blt(T1, ZERO, label_number, s);
+    emit_load_address(ACC, BOOLCONST_PREFIX"0", s);  // false
+    emit_jal_method(Object, copy_meth, s);
+    emit_branch(label_number+1, s);  // the next statement
+
+    emit_label_def(label_number++, s);  // true
+    emit_load_address(ACC, BOOLCONST_PREFIX"0", s);
+    emit_jal_method(Object, copy_meth, s);
+
+    emit_label_def(label_number, s);
+    emit_load(T1, 2, SP, s);
+    emit_load(T2, 1, SP, s);
+    emit_addiu(SP, SP, -8, s);
 }
 
 void eq_class::code(ostream& s, env_type& e) {
+    int label_number = e.blc;
+    e.blc += 2;
+
+    e1->code(s, e);
+    emit_push(T1, s);
+    emit_move(T1, ACC, s);
+    e2->code(s, e);
+    emit_push(T2, s);
+    emit_move(T2, ACC, s);
+
+    emit_load_address(ACC, BOOLCONST_PREFIX"1", s);
+    emit_load_address(A1, BOOLCONST_PREFIX"0", s);
+    emit_jal(EQUALITY_TEST, s);
 }
 
 void leq_class::code(ostream& s, env_type& e) {
+    int label_number = e.blc;
+    e.blc += 2;  // one for false, one for the next statement
+
+    e1->code(s, e);
+    emit_push(T1, s);
+    emit_load(T1, DEFAULT_OBJFIELDS, ACC, s);
+    e2->code(s, e);
+    emit_push(T2, s);
+    emit_load(T2, DEFAULT_OBJFIELDS, ACC, s);
+    emit_sub(T1, T1, T2, s);
+    emit_bleq(T1, ZERO, label_number, s);
+    emit_load_address(ACC, BOOLCONST_PREFIX"0", s);  // false
+    emit_jal_method(Object, copy_meth, s);
+    emit_branch(label_number+1, s);  // the next statement
+
+    emit_label_def(label_number++, s);  // true
+    emit_load_address(ACC, BOOLCONST_PREFIX"1", s);
+    emit_jal_method(Object, copy_meth, s);
+
+    emit_label_def(label_number, s);
+    emit_load(T1, 2, SP, s);
+    emit_load(T2, 1, SP, s);
+    emit_addiu(SP, SP, -8, s);
 }
 
 void comp_class::code(ostream& s, env_type& e) {
+    e1->code(s, e);
+    emit_push(T1, s);
+    emit_load(T1, DEFAULT_OBJFIELDS, ACC, s);
+    emit_neg(T1, T1, s);
+    emit_store(T1, DEFAULT_OBJFIELDS, ACC, s);
+    emit_load(T1, 1, SP, s);
+    emit_addiu(SP, SP, -4, s);
 }
 
 void int_const_class::code(ostream& s, env_type& e)
@@ -1103,19 +1400,33 @@ void bool_const_class::code(ostream& s, env_type& e)
 }
 
 void new__class::code(ostream& s, env_type& e) {
+    Symbol tn = type_name;
+    if (tn == SELF_TYPE) {
+        tn = e.curr_class->get_name();
+    }
     emit_partial_load_address(ACC, s);
-    emit_protobj_ref(type_name, s);
+    emit_protobj_ref(tn, s);
     s << endl;
+    emit_jal_method(Object, copy_meth, s);
     s << JAL;
-    emit_method_ref(Object, copy, s);
+    emit_init_ref(tn, s);
     s << endl;
-    s << JAL;
-    emit_init_ref(type_name, s);
 }
 
 void isvoid_class::code(ostream& s, env_type& e) {
+    int label_number = e.blc;
+    e.blc += 2;
+
     e1->code(s, e);
-    emit_store
+    emit_bne(ACC, ZERO, label_number, s);
+    emit_load_address(ACC, BOOLCONST_PREFIX"1", s);
+    emit_jal_method(Object, copy_meth, s);
+    emit_branch(label_number+1, s);
+
+    emit_label_def(label_number++, s);
+    emit_load_address(ACC, BOOLCONST_PREFIX"0", s);
+    emit_jal_method(Object, copy_meth, s);
+    emit_label_def(label_number, s);
 }
 
 void no_expr_class::code(ostream& s, env_type& e) {
@@ -1123,14 +1434,24 @@ void no_expr_class::code(ostream& s, env_type& e) {
 }
 
 void object_class::code(ostream& s, env_type& e) {
-    int ret = e.lookup_object(name);
-    if (ret == 0) {  // self
+    env_type::id_type idtype;
+    int offset;
+    idtype = e.lookup_object(name, offset);
+    switch (idtype) {
+    case env_type::SELFOBJ:
         emit_move(ACC, SELF, s);
-    } else if (ret > 0) {  // attribute
-        emit_move(ACC, ret, SELF, s);
-    } else if {  // formal
-        emit_move(ACC, -ret*WORD_SIZE, FP, s);
-    } else {  // let local
+        break;
+    case env_type::ATTRIBUTE:
+        emit_store(ACC, offset, SELF, s);
+        break;
+    case env_type::FORMAL:
+        emit_store(ACC, offset, FP, s);
+        break;
+    case env_type::LOCAL:
+        emit_store(ACC, offset, FP, s);
+        break;
+    default:
+        assert(0);
     }
 }
 
@@ -1139,7 +1460,7 @@ void object_class::code(ostream& s, env_type& e) {
 // 
 //
 
-void emit_class_names(ostream& s, CgenNodeP node) {
+static void emit_class_names(ostream& s, CgenNodeP node) {
     s << WORD;
     stringtable.lookup_string(node->get_name()->get_string())->code_ref(s);
     s << endl;
@@ -1149,7 +1470,7 @@ void emit_class_names(ostream& s, CgenNodeP node) {
     }
 }
 
-void emit_class_object_table(ostream& s, CgenNodeP node) {
+static void emit_class_object_table(ostream& s, CgenNodeP node) {
     s << WORD;
     emit_protobj_ref(node->get_name(), s);
     s << endl;
@@ -1164,11 +1485,11 @@ void emit_class_object_table(ostream& s, CgenNodeP node) {
 }
 
 /* To keep method order consistent, we iterate inherited methods reversely
- * and insert an inherited method to the front of method vector of current
+ * and insert an inherited method to the front of method vector of the current
  * class if no overriding version is found. Otherwise, we replace it with
  * the overriding version.
  */
-void emit_dispatch_table(ostream& s, env_type& e, const std::vector<method_classname_pair>& ims) {
+static void emit_dispatch_table(ostream& s, env_type& e, const std::vector<method_classname_pair>& ims) {
     s << e.curr_class->get_name() << DISPTAB_SUFFIX << LABEL;
 
     std::vector<method_classname_pair> pms;  // non-inherited methods
@@ -1191,17 +1512,31 @@ void emit_dispatch_table(ostream& s, env_type& e, const std::vector<method_class
             pms.insert(pms.begin(), *rit);
         }
     }
+    int count = 0;
     for (std::vector<method_classname_pair>::iterator it = pms.begin(); it != pms.end(); ++it) {
         s << WORD;
         emit_method_ref(it->second, it->first->get_name(), s);
         s << endl;
 
-        // avoid duplicate record
+#ifdef MYDEBUG
+        std::cerr << "[moc] class: " << e.curr_class->get_name() << ", method: "
+            << it->first->get_name() << ", offset: " << WORD_SIZE*count << std::endl;
+#endif
+
+        // construct method offset container
+        e.set_method_offset(it->first->get_name(), count++);
+
         Feature curr_method_save = e.curr_method;
         e.curr_method = it->first;
+        // avoid duplicate record
         if (it->second == e.curr_class->get_name()) {
-            Formals formals = it->first->get_formals();
+            Formals formals = dynamic_cast<method_class*>(it->first)->get_formals();
             for (int j = formals->first(); formals->more(j); j = formals->next(j)) {
+#ifdef MYDEBUG
+                std::cerr << "[foc] class: " << e.curr_class->get_name() << ", method: "
+                    << it->first->get_name() << ", formal: " << formals->nth(j)->get_name()
+                    << ", offset: " << WORD_SIZE*(j+1) << std::endl;
+#endif
                 e.set_formal_offset(formals->nth(j)->get_name(), j+1);
             }
         }
@@ -1216,7 +1551,7 @@ void emit_dispatch_table(ostream& s, env_type& e, const std::vector<method_class
 
 }
 
-void emit_prototype_objects(ostream& s, env_type& e, const std::vector<Feature>& ias) {
+static void emit_prototype_objects(ostream& s, env_type& e, const std::vector<Feature>& ias) {
 
     s << WORD << -1 << endl;    // eye catcher
 
@@ -1255,8 +1590,12 @@ void emit_prototype_objects(ostream& s, env_type& e, const std::vector<Feature>&
         }
         s << endl;
 
+#ifdef MYDEBUG
+        std::cerr << "[aoc] class: " << e.curr_class->get_name() << ", attr: "
+            << attr->get_name() << ", offset: " << WORD_SIZE*offset << std::endl;
+#endif
         // construct offset container
-        e.set_attr_offset(attr->get_name(), WORD_SIZE*offset++);
+        e.set_attr_offset(attr->get_name(), offset++);
     }
 
     for (List<CgenNode>* c = e.curr_class->get_children(); c; c = c->tl()) {
@@ -1267,19 +1606,19 @@ void emit_prototype_objects(ostream& s, env_type& e, const std::vector<Feature>&
     }
 }
 
-void gather_depth(env_type& e) {
+static void gather_depth(env_type& e) {
 
     e.curr_class->gather_depth(e);
 
     for (List<CgenNode>* c = e.curr_class->get_children(); c; c = c->tl()) {
         CgenNodeP curr_class_save = e.curr_class;
-        c->hd()->gather_depth(e);
+        e.curr_class = c->hd();
+        gather_depth(e);
         e.curr_class = curr_class_save;
     }
 }
 
 void class__class::gather_depth(env_type& e) {
-    e.curr_class = this;
     for (int i = features->first(); features->more(i); i = features->next(i)) {
         features->nth(i)->gather_depth(e);
     }
@@ -1287,13 +1626,21 @@ void class__class::gather_depth(env_type& e) {
 
 void attr_class::gather_depth(env_type& e) {
     int depth = init->gather_depth(e);
+#ifdef MYDEBUG
+    std::cerr << "[adc] class: " << e.curr_class->get_name() << ", attr: "
+        << name << ", depth: " << depth << std::endl;
+#endif
     e.set_attr_depth_info(depth);
 }
 
 void method_class::gather_depth(env_type& e) {
     e.curr_method = this;
-    int depth = init->gather_depth(e);
-    e.set_method_depth_info(name, depth);
+    int depth = expr->gather_depth(e);
+#ifdef MYDEBUG
+    std::cerr << "[mdc] class: " << e.curr_class->get_name() << ", method: "
+        << name << ", depth: " << depth << std::endl;
+#endif
+    e.set_method_depth_info(depth);
     e.curr_method = 0;
 }
 
@@ -1434,7 +1781,7 @@ int object_class::gather_depth(env_type& e) {
  *
  *  Where the new $fp should locate is not fixed and is totally up to the designer.
  */
-void emit_object_initializers(ostream& s, env_type& e) {
+static void emit_object_initializers(ostream& s, env_type& e) {
     emit_init_ref(e.curr_class->get_name(), s);
     s << LABEL;
 
@@ -1463,12 +1810,12 @@ void emit_object_initializers(ostream& s, env_type& e) {
     // 2. save caller-saved registers if needed ($a0-$a3, $t0-$t9)
     // 3. execute jal
     
-    int depth = attr_depth_info();
+    int depth = e.attr_depth_info();
     emit_precedure_set_up_code(s, depth);
     emit_move(SELF, ACC, s);
 
     CgenNodeP parent = e.curr_class->get_parentnd();
-    if (parent) {
+    if (parent && parent->get_name() != No_class) {
         s << JAL;
         emit_init_ref(parent->get_name(), s);
         s << endl;
@@ -1495,7 +1842,7 @@ void emit_object_initializers(ostream& s, env_type& e) {
 }
 
 void attr_class::code(ostream& s, env_type& e) {
-    if (init->get_name() == No_type) {
+    if (init->get_type() == No_type) {
         return;
     }
 
@@ -1508,7 +1855,9 @@ void attr_class::code(ostream& s, env_type& e) {
     init->code(s, e);
     // save the address of the newly allocated object to the
     // corresponding location of the object
-    emit_store(ACC, e.attr_offset(name), SELF, s);
+    if (init->get_type() != No_type) {
+        emit_store(ACC, e.attr_offset(name), SELF, s);
+    }
 
     // restore
     e.curr_loc = 0;
@@ -1520,7 +1869,7 @@ void method_class::code(ostream& s, env_type& e) {
     env_type::local_offset_container loc;
     e.curr_loc = &loc;
 
-    int narg = dynamic_cast<method_class*>(ft)->get_formals()->len();
+    int narg = formals->len();
     int depth = e.method_depth_info();
     emit_precedure_set_up_code(s, depth);
     emit_move(SELF, ACC, s);
@@ -1533,16 +1882,18 @@ void method_class::code(ostream& s, env_type& e) {
     e.curr_method = 0;
 }
 
-void emit_class_methods(ostream& s, env_type& e) {
-    Features features = e.curr_class->get_features();
-    for (int i = features->first(); features->more(i), i = features->next(i)) {
-        Feature ft = features->nth(i);
-        if (!ft->is_method()) {
-            continue;
+static void emit_class_methods(ostream& s, env_type& e) {
+    if (!e.curr_class->basic()) {   // skip built-in classes
+        Features features = e.curr_class->get_features();
+        for (int i = features->first(); features->more(i); i = features->next(i)) {
+            Feature ft = features->nth(i);
+            if (!ft->is_method()) {
+                continue;
+            }
+            emit_method_ref(e.curr_class->get_name(), ft->get_name(), s);
+            s << LABEL;
+            ft->code(s, e);
         }
-        emit_method_ref(e.curr_class->get_name(), ft->get_name());
-        s << LABEL;
-        ft->code(s, e);
     }
 
     for (List<CgenNode>* c = e.curr_class->get_children(); c; c = c->tl()) {
@@ -1554,11 +1905,11 @@ void emit_class_methods(ostream& s, env_type& e) {
 }
 
 
-void emit_precedure_set_up_code(ostream& s) {
+static void emit_precedure_set_up_code(ostream& s) {
     emit_precedure_set_up_code(s, 0);
 }
 
-void emit_precedure_set_up_code(ostream& s, int depth) {
+static void emit_precedure_set_up_code(ostream& s, int depth) {
     emit_addiu(SP, SP, -WORD_SIZE*(FRAME_SIZE+depth), s);
     emit_store(FP, FRAME_SIZE+depth, SP, s);
     emit_store(SELF, FRAME_SIZE-1+depth, SP, s);
@@ -1566,15 +1917,15 @@ void emit_precedure_set_up_code(ostream& s, int depth) {
     emit_addiu(FP, SP, WORD_SIZE*(FRAME_SIZE+depth) ,s);
 }
 
-void emit_precedure_clean_up_code(ostream& s) {
+static void emit_precedure_clean_up_code(ostream& s) {
     emit_precedure_clean_up_code(s, 0, 0);
 }
 
-void emit_precedure_clean_up_code(ostream& s, int depth) {
+static void emit_precedure_clean_up_code(ostream& s, int depth) {
     emit_precedure_clean_up_code(s, depth, 0);
 }
 
-void emit_precedure_clean_up_code(ostream& s, int depth, int narg) {
+static void emit_precedure_clean_up_code(ostream& s, int depth, int narg) {
     emit_load(FP, FRAME_SIZE+depth, SP, s);
     emit_load(SELF, FRAME_SIZE-1+depth, SP, s);
     emit_load(RA, FRAME_SIZE-2+depth, SP, s);

@@ -108,5 +108,6 @@
 #define EQUALITY_TEST "equality_test"
 #define CASE_NO_MATCH_ABORT "_case_abort"
 #define CASE_ON_VOID_ABORT "_case_abort2"
+#define DISPATCH_ON_VOID_ABORT "_dispatch_abort"
 
 #define FRAME_SIZE 3

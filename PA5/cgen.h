@@ -51,6 +51,8 @@ public:
    CgenClassTable(Classes, ostream& str);
    void code();
    CgenNodeP root();
+   bool is_ancestor(Symbol t1, Symbol t2);
+   void set_class_tags(CgenNodeP node, int& count);
 };
 
 
@@ -90,6 +92,9 @@ class BoolConst
 //
 //
 
+// The following two classes are auxiliary classes for
+// using std::find_if because we need extra parameters
+// when finding a matching element.
 typedef std::pair<Feature, Symbol> method_classname_pair;
 
 class method_name_is {
@@ -105,10 +110,25 @@ private:
     Symbol _name;
 };
 
+class has_local {
+public:
+    has_local(Symbol local):_local(local)
+    {}
+
+    bool operator() (const std::pair<Symbol, int>& p) {
+        return p.first == _local;
+    }
+private:
+    Symbol _local;
+};
+
+
 class env_type {
 public:
     // type, attr, offset
     typedef std::map<Symbol, std::map<Symbol, int> > attr_offset_container;
+    // type, method_name, offset
+    typedef std::map<Symbol, std::map<Symbol, int> > method_offset_container;
     // type, method, formal, offset
     typedef std::map<Symbol, std::map<Symbol, std::map<Symbol, int> > > formal_offset_container;
     // type, method, max_let_and_case_nested_depth
@@ -122,7 +142,8 @@ public:
         ATTRIBUTE,
         FORMAL,
         LOCAL,
-        SELFOBJ
+        SELFOBJ,
+        INVALID
     };
 
     env_type():
@@ -134,29 +155,45 @@ public:
         curr_loc(0)
     {}
 
-    // 12, 16, 20, ... (relative to $s0)
+    // 3, 4, 5, ... (relative to $s0, in WORDs)
     int attr_offset(Symbol attr) {
         assert(curr_class && attr);
         return aoc[curr_class->get_name()][attr];
     }
 
-    // 4, 8, 12, ... (relative to $fp)
+    // 1, 2, 3, ... (relative to $fp, in WORDs)
     int formal_offset(Symbol formal) {
         assert(curr_class && curr_method && formal);
         return foc[curr_class->get_name()][curr_method->get_name()][formal];
     }
 
-    // -12, -16, -20, ... (relative to $fp)
+    // -3, -4, -5, ... (relative to $fp, in WORDs)
     int local_offset(Symbol local) {
         assert(curr_class && curr_method && curr_loc && curr_depth && local);
         // iterate reversely to find the first matched one
-        for (local_offset_container::const_reverse_iterater rit = curr_loc->rbegin();
-                rit != loc->rend(); ++rit) {
+        // fix: we should start from begin() + curr_depth - 1
+        for (local_offset_container::const_reverse_iterator rit = curr_loc->rbegin();
+                rit != curr_loc->rend(); ++rit) {
             if (rit->first == local) {
                 return rit->second;
             }
         }
         assert(0);
+        return -1;  // makes compiler happy
+    }
+
+    // 0, 4, 8, ... (relative to the label of dispatch table)
+    int method_offset(Symbol type, Symbol method) {
+        assert(type && method);
+#ifdef DEBUG
+        if (moc.count(type) && moc[type].count(method)) {
+            return moc[type][method];
+        }
+        assert(0);
+        return -1;
+#else
+        return moc[type][method];
+#endif
     }
 
     int attr_depth_info() {
@@ -180,9 +217,19 @@ public:
         foc[curr_class->get_name()][curr_method->get_name()][formal] = n;
     }
 
+    void set_method_offset(Symbol method, int n) {
+        assert(curr_class && method);
+        moc[curr_class->get_name()][method] = n;
+    }
+
     void set_local_offset(Symbol local) {
         assert(curr_class && curr_method && curr_loc && curr_depth && local);
-        curr_loc->push_back(std::make_pair(local, (FRAME_SIZE+curr_depth-1)*WORD_SIZE));
+        curr_loc->push_back(std::make_pair(local, FRAME_SIZE+curr_depth-1));
+    }
+
+    void pop_the_last_local() {
+        assert(curr_loc->size() > 0);
+        curr_loc->pop_back();
     }
 
     void set_attr_depth_info(int depth) {
@@ -198,14 +245,16 @@ public:
     }
 
     // lookup an object in the current context.
-    int lookup_object(Symbol o, int& offset) {
+    id_type lookup_object(Symbol o, int& offset) {
         assert(curr_class);
         extern Symbol self;
         if (o == self) {
             return SELFOBJ;
         }
 
-        if (curr_method && curr_loc && curr_depth && loc.count(o)) {  // a local (let or case)
+        if (curr_method && curr_loc && curr_depth &&
+                std::find_if(curr_loc->begin(), curr_loc->end(), has_local(o))
+                != curr_loc->end()) {  // a local (let or case)
             offset = local_offset(o);
             return LOCAL;
         } else if (aoc[curr_class->get_name()].count(o)) {  // an attribute
@@ -216,6 +265,7 @@ public:
             return FORMAL;
         } else {  // should never reach here
             assert(0);
+            return INVALID;
         }
     }
 
@@ -225,6 +275,7 @@ public:
 
     attr_offset_container aoc;
     formal_offset_container foc;
+    method_offset_container moc;
 
     method_depth_container mdc;
     attr_depth_container adc;
@@ -240,7 +291,6 @@ public:
         _ct(ct)
     {}
 
-    // FIXME
     bool operator() (const Case& a, const Case& b) {
         CgenNodeP node_a = _ct->probe(a->get_type());
         CgenNodeP node_b = _ct->probe(b->get_type());
@@ -250,14 +300,3 @@ public:
     CgenClassTableP _ct;
 };
 
-void emit_class_names(ostream& s, CgenNodeP node);
-void emit_class_object_table(ostream& s, CgenNodeP node);
-void emit_dispatch_table(ostream& s, env_type& e, const std::vector<method_classname_pair>& ims);
-void emit_prototype_objects(ostream& s, env_type& e, const std::vector<Feature>& ias);
-void emit_class_methods(ostream& s, env_type& e);
-
-void emit_precedure_set_up_code(ostream& s);
-void emit_precedure_set_up_code(ostream& s, int depth);
-void emit_precedure_clean_up_code(ostream& s);
-void emit_precedure_clean_up_code(ostream& s, int depth);
-void emit_precedure_clean_up_code(ostream& s, int depth, int narg);

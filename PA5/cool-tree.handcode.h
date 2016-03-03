@@ -77,7 +77,7 @@ void gather_depth(env_type&);
 virtual void dump_with_types(ostream&,int) = 0;  \
 virtual Symbol get_name() = 0; \
 virtual void code(ostream&, env_type&) = 0; \
-void gather_depth(env_type&) = 0;
+virtual void gather_depth(env_type&) = 0;
 
 
 #define Feature_SHARED_EXTRAS                                       \
@@ -88,21 +88,27 @@ void gather_depth(env_type&);
 
 
 #define Formal_EXTRAS                              \
-virtual void dump_with_types(ostream&,int) = 0;
+virtual void dump_with_types(ostream&,int) = 0; \
+virtual Symbol get_name() = 0;
 
 
 #define formal_EXTRAS                           \
-void dump_with_types(ostream&,int);
+void dump_with_types(ostream&,int); \
+Symbol get_name() { return name; }
 
 
 #define Case_EXTRAS                             \
 virtual void dump_with_types(ostream& ,int) = 0; \
-virtual int gather_depth(env_type&) = 0;
+virtual int gather_depth(env_type&) = 0; \
+virtual void code(ostream&, env_type&) = 0; \
+virtual Symbol get_type() = 0;
 
 
 #define branch_EXTRAS                                   \
 void dump_with_types(ostream& ,int); \
-int gather_depth(env_type&);
+int gather_depth(env_type&); \
+void code(ostream&, env_type&); \
+Symbol get_type() { return type_decl; }
 
 
 #define Expression_EXTRAS                    \
