@@ -4,7 +4,7 @@ The structure of the source code is rearranged which means you don't need the vi
 Just install Flex, Bison and SPIM. Enjoy!
 
 UPDATE: Csh is needed for grading.
-UPDATE2: You spim may not be used for grading because the grading script uses absolute path (/usr/class/cs143/...) to refer to spim and the output of your spim is most likely to be different to the reference. So if you hope to grade your code generator, you may either install a same spim as the one the course provides or grade on the virtual machine.
+UPDATE2: Your spim may not be used for grading because the grading script uses absolute path (/usr/class/cs143/...) to refer to spim and the output of your spim is most likely to be different to the reference. So if you hope to grade your code generator, you may either install a same spim as the one the course provides or grade on the virtual machine.
 
 Check my blog about this project if you're interested.
 http://blog.wisatbff.com/2016/02/04/compiler-004.html (Chinese)
